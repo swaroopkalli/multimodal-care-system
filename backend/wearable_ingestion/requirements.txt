@@ -1,0 +1,22 @@
+# ============================================================
+# MindBridge – Wearable Ingestion Feature
+# Feature-specific Python dependencies.
+#
+# Install into an isolated virtualenv:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# These packages are ADDITIONAL to the existing root
+# requirements.txt and must not replace or modify it.
+# The existing Flask application uses its own environment.
+# ============================================================
+
+# Redis Pub/Sub client (TCP transport)
+redis==5.2.1
+
+# PostgreSQL adapter (same version family as the existing app)
+psycopg2-binary==2.9.11
+
+# Environment variable loading
+python-dotenv==1.0.1

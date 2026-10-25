@@ -1,0 +1,51 @@
+# ============================================================
+# MindBridge – Wearable Ingestion Feature
+# Isolated Redis Compose file.
+#
+# This file is ONLY for the wearable_ingestion feature.
+# It does not affect or replace any other infrastructure.
+#
+# Usage:
+#   Start  : docker compose -f compose.yaml up -d
+#   Stop   : docker compose -f compose.yaml down
+#   Logs   : docker compose -f compose.yaml logs -f redis
+#   Restart: docker compose -f compose.yaml restart redis
+#   Status : docker compose -f compose.yaml ps
+# ============================================================
+
+services:
+  redis:
+    image: redis:7.4.1-alpine
+    container_name: mindbridge_ingestion_redis
+    restart: unless-stopped
+
+    # Expose only on loopback for local development security.
+    # Change to "6379:6379" (no host prefix) only in a secured environment.
+    ports:
+      - "127.0.0.1:6379:6379"
+
+    # Redis is used purely as a Pub/Sub broker and short-lived cache.
+    # Persistence (AOF / RDB) is intentionally disabled because:
+    #   1. Pub/Sub messages are transient by design.
+    #   2. Cache entries are rebuildable from PostgreSQL.
+    # Do NOT enable persistence to compensate for Pub/Sub message loss.
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --loglevel notice
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    # Resource limits prevent runaway memory use on a dev machine.
+    deploy:
+      resources:
+        limits:
+          memory: 300m
