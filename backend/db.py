@@ -61,7 +61,8 @@ def create_tables():
             pedometer INTEGER,
             sleep_minutes INTEGER,
             screentime_minutes INTEGER,
-            heartrate INTEGER
+            heartrate INTEGER,
+            event_id UUID UNIQUE
         );
 
         CREATE TABLE IF NOT EXISTS doctor_notes (
@@ -88,6 +89,10 @@ def create_tables():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
+
+    # Additive migration for databases created before wearable event IDs existed.
+    cursor.execute("ALTER TABLE wearable_data ADD COLUMN IF NOT EXISTS event_id UUID")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS wearable_data_event_id_unique ON wearable_data (event_id)")
 
     conn.commit()
     cursor.close()

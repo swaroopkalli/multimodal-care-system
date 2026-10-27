@@ -27,7 +27,7 @@ Usage
 -----
     python simulator.py
 
-Configuration (from .env in this directory)
+Configuration (root .env; optional wearable_ingestion/.env overrides)
 -------------------------------------------
     REDIS_HOST               default: 127.0.0.1
     REDIS_PORT               default: 6379
@@ -40,6 +40,7 @@ Configuration (from .env in this directory)
 from __future__ import annotations
 
 import itertools
+import math
 import json
 import logging
 import os
@@ -50,18 +51,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-# pyrefly: ignore[missing-import]
-import redis
-from dotenv import load_dotenv
+from env_config import load_ingestion_environment
 
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
 
-# Load .env from THIS directory (wearable_ingestion/), NOT the project root.
-# This intentionally avoids reading the application's existing .env.
 _HERE = Path(__file__).parent
-load_dotenv(_HERE / ".env")
+load_ingestion_environment(__file__)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,6 +77,8 @@ REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_CHANNEL: str = os.getenv("REDIS_CHANNEL", "wearable:vitals")
 INTERVAL: float = float(os.getenv("SIMULATOR_INTERVAL_SECONDS", "5"))
 DEVICE_ID: str = os.getenv("SIMULATOR_DEVICE_ID", "sim-device-001")
+BEHAVIORAL_UPDATE_INTERVAL: float = float(os.getenv("BEHAVIORAL_UPDATE_INTERVAL_SECONDS", "86400"))
+HEART_RATE_SCENARIO: str = os.getenv("SIMULATOR_HEART_RATE_SCENARIO", "normal").strip().lower()
 
 _raw_patient_ids = os.getenv("SIMULATOR_PATIENT_IDS", "1")
 PATIENT_IDS: list[int] = [int(p.strip()) for p in _raw_patient_ids.split(",") if p.strip()]
@@ -98,8 +97,43 @@ if not PATIENT_IDS:
 # a real sensor stream.  Values are not clinically validated.
 # ---------------------------------------------------------------------------
 
-def _generate_vitals(patient_id: int, sequence: int) -> dict:
+class PatientSimulationState:
+    """Per-patient state so long-duration behavioral metrics stay coherent."""
+
+    def __init__(self, rng: random.Random | None = None, behavioral_interval: float = 86400):
+        if behavioral_interval <= 0:
+            raise ValueError("behavioral_interval must be greater than zero")
+        self.rng = rng or random.Random()
+        self.behavioral_interval = behavioral_interval
+        self.behavioral_values: tuple[int, int] | None = None
+        self.behavioral_bucket: int | None = None
+        self.heart_rate = 72.0
+
+    def behaviors(self, now: float) -> tuple[int, int]:
+        bucket = math.floor(now / self.behavioral_interval)
+        if bucket != self.behavioral_bucket:
+            self.behavioral_values = (
+                self.rng.randint(200, 540), self.rng.randint(20, 480)
+            )
+            self.behavioral_bucket = bucket
+        assert self.behavioral_values is not None
+        return self.behavioral_values
+
+    def next_heart_rate(self, scenario: str = "normal") -> int:
+        # Mean-reverting movement provides continuity rather than independent draws.
+        target = {"normal": 72, "elevated": 118, "low": 52}.get(scenario)
+        if target is None:
+            raise ValueError("scenario must be normal, elevated, or low")
+        self.heart_rate += 0.22 * (target - self.heart_rate) + self.rng.gauss(0, 3.0)
+        return max(35, min(190, round(self.heart_rate)))
+
+
+def _generate_vitals(patient_id: int, sequence: int, state: PatientSimulationState | None = None,
+                     *, now: float | None = None, scenario: str | None = None) -> dict:
     """Return a single synthetic vital-sign event dict."""
+    state = state or PatientSimulationState()
+    epoch = time.time() if now is None else now
+    sleep_minutes, screentime_minutes = state.behaviors(epoch)
     return {
         # Ingestion metadata
         "event_id": str(uuid.uuid4()),
@@ -111,9 +145,9 @@ def _generate_vitals(patient_id: int, sequence: int) -> dict:
 
         # Columns matching wearable_data schema (backend/db.py)
         "pedometer": random.randint(100, 800),          # steps per interval
-        "sleep_minutes": random.randint(200, 540),       # cumulative daily
-        "screentime_minutes": random.randint(20, 480),   # cumulative daily
-        "heartrate": random.randint(58, 105),            # resting bpm
+        "sleep_minutes": sleep_minutes,       # last completed nightly session, stable per day
+        "screentime_minutes": screentime_minutes,   # synthetic daily aggregate, stable per day
+        "heartrate": state.next_heart_rate(scenario or HEART_RATE_SCENARIO),
     }
 
 
@@ -121,8 +155,12 @@ def _generate_vitals(patient_id: int, sequence: int) -> dict:
 # Redis connection with retry
 # ---------------------------------------------------------------------------
 
-def _connect_redis() -> redis.Redis:
+def _connect_redis():
     """Return a Redis client.  Blocks until connection succeeds."""
+    # Import only when connecting so generator helpers can be used offline.
+    # pyrefly: ignore[missing-import]
+    import redis
+
     backoff = 1.0
     while True:
         try:
@@ -160,13 +198,17 @@ def run() -> None:
     # Cycle through patient IDs indefinitely, giving each one a turn.
     patient_cycle = itertools.cycle(PATIENT_IDS)
     sequence_counters: dict[int, int] = {pid: 0 for pid in PATIENT_IDS}
+    patient_states = {
+        pid: PatientSimulationState(behavioral_interval=BEHAVIORAL_UPDATE_INTERVAL)
+        for pid in PATIENT_IDS
+    }
 
     while True:
         patient_id = next(patient_cycle)
         sequence_counters[patient_id] += 1
         seq = sequence_counters[patient_id]
 
-        event = _generate_vitals(patient_id, seq)
+        event = _generate_vitals(patient_id, seq, patient_states[patient_id])
         payload = json.dumps(event)
 
         try:

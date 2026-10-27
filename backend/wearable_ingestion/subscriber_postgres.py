@@ -15,7 +15,8 @@ ARCHITECTURE POSITION
 
 DESIGN DECISIONS
 ----------------
-* Uses its OWN database connection read from feature-specific .env.
+* Uses the ingestion DB settings from repository-root .env, with optional
+  feature-local overrides.
   It does NOT import or reuse backend/db.py.
 * Parameterized SQL only — no string formatting of user data.
 * Validates required fields and types before touching the database.
@@ -36,7 +37,7 @@ Usage
 -----
     python subscriber_postgres.py
 
-Configuration (from .env in this directory)
+Configuration (root .env; optional local .env overrides)
 -------------------------------------------
     INGESTION_DB_HOST
     INGESTION_DB_PORT
@@ -64,14 +65,14 @@ import psycopg2
 import psycopg2.extras
 # pyrefly: ignore[missing-import]
 import redis
-from dotenv import load_dotenv
+from env_config import load_ingestion_environment
 
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).parent
-load_dotenv(_HERE / ".env")
+load_ingestion_environment(__file__)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,7 +100,7 @@ DB_SSLMODE: str = os.getenv("INGESTION_DB_SSLMODE", "require")
 if not DB_HOST or not DB_USER or not DB_PASSWORD:
     log.error(
         "INGESTION_DB_HOST, INGESTION_DB_USER, and INGESTION_DB_PASSWORD "
-        "must be set in wearable_ingestion/.env"
+        "must be set in the repository root .env or exported in the shell"
     )
     sys.exit(1)
 

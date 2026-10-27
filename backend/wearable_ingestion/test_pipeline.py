@@ -39,10 +39,10 @@ import psycopg2
 import psycopg2.extras
 # pyrefly: ignore[missing-import]
 import redis
-from dotenv import load_dotenv
+from env_config import load_ingestion_environment
 
 _HERE = Path(__file__).parent
-load_dotenv(_HERE / ".env")
+load_ingestion_environment(__file__)
 
 # ---------------------------------------------------------------------------
 # Minimal inline re-implementations to avoid importing the subscriber
@@ -235,7 +235,7 @@ def t5_persist_valid_event(conn: psycopg2.extensions.connection | None) -> str |
         row = cur.fetchone()
 
     if row is None:
-        _result("T5", False, "No patients in DB — run schema.sql seed section")
+        _result("T5", False, "No patient rows exist in the configured database")
         return None
 
     patient_id = row["id"]

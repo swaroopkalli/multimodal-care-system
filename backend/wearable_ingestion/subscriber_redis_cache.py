@@ -50,7 +50,7 @@ Usage
 -----
     python subscriber_redis_cache.py
 
-Configuration (from .env in this directory)
+Configuration (root .env; optional wearable_ingestion/.env overrides)
 -------------------------------------------
     REDIS_HOST              (default: 127.0.0.1)
     REDIS_PORT              (default: 6379)
@@ -71,14 +71,14 @@ from typing import Any
 
 # pyrefly: ignore[missing-import]
 import redis
-from dotenv import load_dotenv
+from env_config import load_ingestion_environment
 
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).parent
-load_dotenv(_HERE / ".env")
+load_ingestion_environment(__file__)
 
 logging.basicConfig(
     level=logging.INFO,

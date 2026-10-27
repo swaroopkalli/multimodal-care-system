@@ -1,13 +1,33 @@
 # MindBridge – Wearable Data Ingestion Pipeline
 
-> **Isolation guarantee**: This feature lives entirely under
-> `backend/wearable_ingestion/`. It does not touch any existing
-> Flask routes, frontend code, authentication, patient-context
-> builder, environment files, or root `requirements.txt`.
+> The ingestion processes remain independent from Flask routes and frontend
+> code. They load configuration from the repository root `.env` (and may use
+> an optional feature-local `.env` for missing settings); they do not alter
+> either environment file.
 
 ---
 
 ## Overview
+
+### Simulator behavior
+
+`SIMULATOR_HEART_RATE_SCENARIO` supports `normal` (default), `elevated`, and
+`low`. Heart rate follows a mean-reverting noisy series, so consecutive
+measurements vary smoothly. These scenarios are synthetic and are not
+clinically validated. `BEHAVIORAL_UPDATE_INTERVAL_SECONDS` defaults to
+86400 seconds. Sleep is modeled as the last completed nightly session in
+minutes and screen time as a synthetic daily aggregate in minutes; each
+patient's values are reused in events until the interval changes. Both values
+are still included in every event for compatibility. State lives in process
+memory, so it is regenerated after a simulator restart. If a consumer needs
+to distinguish stale aggregates from new measurements, that freshness is not
+currently encoded in the event schema.
+
+Run offline simulator unit checks with:
+
+```bash
+python -m unittest test_simulator.py
+```
 
 ```
 Mock Wearable Simulator
@@ -59,17 +79,18 @@ Follow these steps to create a fresh one.
 
 1. In the Supabase dashboard go to **SQL Editor**.
 2. Paste the contents of `schema.sql` from this directory.
-3. Click **Run**.
+3. Click **Run**. Alternatively, run `python3 apply_schema.py` from this
+   directory after activating the ingestion virtualenv; it reads the root `.env`.
 4. Verify in **Table Editor** that all 8 tables exist and
    `wearable_data` has an `event_id` column.
 
 ### 1d – Why `event_id` is added
 
-The existing `wearable_data` table (defined in `backend/db.py`) has no
-deduplication field. The ingestion pipeline needs one to safely re-process
-an in-memory event without creating duplicate rows.
+Older `wearable_data` tables may not have a deduplication field. The ingestion
+pipeline needs one to safely re-process an in-memory event without creating
+duplicate rows. The schema below and `backend/db.py` both add it compatibly.
 
-`schema.sql` uses `ALTER TABLE wearable_data ADD COLUMN IF NOT EXISTS event_id UUID UNIQUE;`
+`schema.sql` adds `event_id UUID` and a unique index with `IF NOT EXISTS`.
 
 This is:
 - **Additive** – existing rows get `NULL` and are unaffected.
@@ -80,17 +101,14 @@ This is:
 
 ---
 
-## 2. Local Environment Setup
+## 2. Environment Setup
 
-```bash
-cd backend/wearable_ingestion
+The processes automatically load the repository-root `.env`, which is the
+recommended shared configuration. An optional `backend/wearable_ingestion/.env`
+can provide feature-specific overrides. Shell-exported environment variables
+take precedence over both. Never commit credentials.
 
-# Copy the template and fill in your real credentials
-cp .env.example .env
-# Edit .env — never commit it
-```
-
-Required variables in `.env`:
+Required variables (the current root `.env` already contains these):
 
 | Variable | Example | Notes |
 |---|---|---|
@@ -218,7 +236,7 @@ Expected output (with Supabase connected):
 ✅ PASS  T10 – non-int pedometer
 ```
 
-If Supabase credentials are not set, T4–T6 will report `FAIL` with a
+If ingestion DB credentials are not set, T4–T6 will report `FAIL` with a
 clear message. T1–T3 and T7–T10 run without a database.
 
 ---
@@ -267,7 +285,7 @@ LIMIT 10;
 > ⚠️ **This step requires explicit approval before execution.**
 
 The existing `backend/app.py` and `backend/db.py` read connection
-details from their own `.env` file (variables: `DB_HOST`, `DB_PORT`,
+details from the root `.env` (variables: `DB_HOST`, `DB_PORT`,
 `DB_NAME`, `DB_USER`, `DB_PASSWORD`).
 
 To point the existing Flask application at the new Supabase database,
@@ -319,7 +337,7 @@ These readings are never real patient data.
 | File | Purpose |
 |---|---|
 | `compose.yaml` | Isolated Redis Docker service |
-| `schema.sql` | Supabase DB init (reconstructed from `backend/db.py`) |
+| `schema.sql` | Idempotent app schema and wearable `event_id` migration |
 | `.env.example` | Placeholder config — no secrets |
 | `requirements.txt` | Feature-only Python deps |
 | `simulator.py` | Mock wearable publisher |
