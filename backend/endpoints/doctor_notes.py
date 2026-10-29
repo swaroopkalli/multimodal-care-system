@@ -50,18 +50,22 @@ def get_doctor_notes(patient_id):
     finally:
         cursor.close()
         conn.close()
+
 def get_wearable_data(patient_id):
-    conn=get_db_connection()
-    cusor=conn.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        cusor.execute(
+        cursor.execute(
             "SELECT id, patient_id, timestamp, pedometer, sleep_minutes, screentime_minutes, heartrate FROM wearable_data WHERE patient_id = %s ORDER BY timestamp DESC",
             (patient_id,)
         )
-        data = cusor.fetchall()
+        data = cursor.fetchall()
         for entry in data:
             if 'timestamp' in entry and entry['timestamp']:
                 entry['timestamp'] = entry['timestamp'].isoformat()
         return jsonify({"wearable_data": data}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()

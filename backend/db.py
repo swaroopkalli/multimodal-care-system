@@ -1,10 +1,12 @@
 import os
+from pathlib import Path
 import psycopg2
 
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 def get_db_connection():
     conn = psycopg2.connect(
@@ -13,6 +15,7 @@ def get_db_connection():
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
         port=os.getenv("DB_PORT"),
+        sslmode=os.getenv("DB_SSLMODE", "require"),
         cursor_factory=RealDictCursor,
     )
     return conn

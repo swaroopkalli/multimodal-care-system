@@ -280,7 +280,10 @@ class _PatientDashboardState extends State<PatientDashboard> {
       });
     } catch (e) {
       setState(() {
-        _chatHistory.add({'text': 'Error: Could not connect to backend.', 'mine': false});
+        _chatHistory.add({
+          'text': 'Error: ${e.toString().replaceAll("Exception: ", "")}',
+          'mine': false,
+        });
       });
     } finally {
       setState(() {
