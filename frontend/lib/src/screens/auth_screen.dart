@@ -26,12 +26,25 @@ class _AuthScreenState extends State<AuthScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController(); // Only for register
+  final _doctorController = TextEditingController(); // Patient register (optional)
+  final _caretakerController = TextEditingController(); // Patient register (optional)
+
+  @override
+  void initState() {
+    super.initState();
+    // Resume an existing session for this portal instead of asking to log in again.
+    _apiClient.sessionRole().then((role) {
+      if (role == widget.role && mounted) _navigateToDashboard();
+    });
+  }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _doctorController.dispose();
+    _caretakerController.dispose();
     super.dispose();
   }
 
@@ -64,6 +77,12 @@ class _AuthScreenState extends State<AuthScreen> {
 
       if (!_isLogin) {
         payload['name'] = _nameController.text.trim();
+        if (widget.role == 'patient') {
+          final doctor = _doctorController.text.trim();
+          final caretaker = _caretakerController.text.trim();
+          if (doctor.isNotEmpty) payload['doctor_username'] = doctor;
+          if (caretaker.isNotEmpty) payload['caretaker_username'] = caretaker;
+        }
       }
 
       final response = await _apiClient.post(endpoint, payload);
@@ -71,8 +90,8 @@ class _AuthScreenState extends State<AuthScreen> {
       if (_isLogin) {
         // Successful login should return a token
         final token = response['token'];
-        if (token != null) {
-          await _apiClient.saveToken(token);
+        if (token is String) {
+          await _apiClient.saveSession(token, widget.role);
           _navigateToDashboard();
         } else {
           setState(() => _errorMessage = 'No token received from server.');
@@ -173,6 +192,24 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  if (widget.role == 'patient') ...[
+                    TextField(
+                      controller: _doctorController,
+                      decoration: const InputDecoration(
+                        labelText: 'Doctor username (optional)',
+                        prefixIcon: Icon(Icons.medical_information),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _caretakerController,
+                      decoration: const InputDecoration(
+                        labelText: 'Caretaker username (optional)',
+                        prefixIcon: Icon(Icons.verified_user),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                 ],
                 TextField(
                   controller: _usernameController,
@@ -186,7 +223,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   controller: _passwordController,
                   obscureText: true,
                   decoration: const InputDecoration(
-                    labelText: 'Password',
+                    labelText: 'Password (min. 8 characters)',
                     prefixIcon: Icon(Icons.lock),
                   ),
                 ),

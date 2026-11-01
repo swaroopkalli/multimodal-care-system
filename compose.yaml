@@ -1,13 +1,65 @@
+# MindBridge local infrastructure.
+#   docker compose up -d redis neo4j      # required services
+# Ollama normally runs on the host (ports 127.0.0.1:11434). To run it in a
+# container instead, stop the host Ollama and use:
+#   docker compose --profile ollama-container up -d ollama
+# Credentials come from the git-ignored root .env (see .env.example).
+
 services:
+  redis:
+    image: redis:7.4.1-alpine
+    restart: unless-stopped
+    # Host port 6380 avoids clashing with a Redis already installed on the host.
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
+    # AOF is on because wearable events travel through a Redis Stream.
+    # volatile-lru only evicts keys that carry a TTL (rebuildable caches), never
+    # the stream or the EWMA state.
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy volatile-lru
+      --loglevel notice
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+  neo4j:
+    image: neo4j:5.26-community
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}"
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 768m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
   ollama:
+    profiles: ["ollama-container"]
     image: ollama/ollama:latest
     restart: unless-stopped
-    # Flask runs directly on the host in this repository; limit access to loopback.
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
       - ollama_models:/root/.ollama
-    # Available only to containers on this Compose network; do not publish 11434.
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -16,4 +68,7 @@ services:
       start_period: 15s
 
 volumes:
+  redis_data:
+  neo4j_data:
+  neo4j_logs:
   ollama_models:

@@ -1,30 +1,22 @@
 # Local Ollama setup
 
-The Flask backend's two existing chat endpoints now call local Ollama at
-`/api/chat`. Configure `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in the backend
-environment. `OLLAMA_MODEL` must be an exact installed model tag. The default
-URL for a backend running directly on the host is `http://localhost:11434`.
-For a backend added to the root Compose network, use
-`http://ollama:11434`. No external LLM API key is needed.
+The backend talks to Ollama's HTTP API (`/api/chat`, `/api/embed`). Settings (root `.env`, see `.env.example`):
 
-Start Ollama and persist downloaded model files in the named volume:
+| Variable | Meaning |
+|---|---|
+| `OLLAMA_BASE_URL` | default `http://localhost:11434` (Ollama installed on the host) |
+| `OLLAMA_MODEL` | exact installed chat model tag; configured: `llama3.2:3b` |
+| `OLLAMA_EMBED_MODEL`, `EMBED_DIMENSIONS` | embedding model and its vector size; configured: `nomic-embed-text`, 768 |
+| `OLLAMA_NUM_CTX` | context window requested on every call (default 8192) |
+| `OLLAMA_PROMPT_BUDGET_RATIO` | share of the window the prompt may use (default 0.8); the remainder is reserved for the reply and sent as `num_predict` |
+| `OLLAMA_TIMEOUT_SECONDS`, `OLLAMA_RETRIES` | per-request timeout and bounded retries |
 
-```bash
-docker compose up -d ollama
-docker compose exec ollama ollama pull <model-tag>
-```
+Why `llama3.2:3b` with 8192: the development machine has an 8 GB GPU / 15.6 GB RAM; a 3B Q4 model plus an 8k KV cache
+fits comfortably, while the installed `phi3` has a 4k native context and cannot produce embeddings.
+If you change `OLLAMA_EMBED_MODEL` to one with a different dimension, update `EMBED_DIMENSIONS` and drop the
+Neo4j vector indexes (they are recreated on start) before re-embedding with
+`cd backend && python -m services.graph.sync backfill`.
 
-Set `OLLAMA_MODEL=<model-tag>` in the Flask backend environment and start the
-Flask application using its existing run command. Ollama's model download is
-an explicit one-time setup step; container startup does not download a model.
-Compose publishes the Ollama HTTP port on loopback only (`127.0.0.1:11434`),
-which lets this repository's host-run Flask backend connect without exposing
-Ollama to the network. Do not change this to a public bind address. GPU support
-depends on the host's Docker runtime and can be added with the appropriate
-optional device reservation.
-
-The client retries transient connection and server failures a bounded number
-of times (`OLLAMA_RETRIES`, default 2), with a configurable per-request
-timeout (`OLLAMA_TIMEOUT_SECONDS`, default 120). HTTP model-not-found errors,
-invalid responses, and final connection failures are returned to the existing
-chat handler as HTTP 500 errors. The API remains non-streaming as before.
+Models: `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text` (one-time).
+To run Ollama in a container instead of on the host: stop the host Ollama, then
+`docker compose --profile ollama-container up -d ollama` and pull the models inside it.

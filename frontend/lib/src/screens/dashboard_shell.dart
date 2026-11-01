@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../state/care_state.dart';
 import 'architecture_screen.dart';
-import 'caretaker_dashboard.dart';
-import 'doctor_dashboard.dart';
-import 'patient_dashboard.dart';
 import 'auth_screen.dart';
 
 class DashboardShell extends StatefulWidget {
@@ -54,7 +51,6 @@ class _DashboardShellState extends State<DashboardShell>
       body: AnimatedBuilder(
         animation: _controller,
         builder: (context, _) {
-          final value = Curves.easeOutBack.transform(_controller.value);
           return SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
             child: Column(
@@ -82,7 +78,8 @@ class _DashboardShellState extends State<DashboardShell>
                       colors: const [Color(0xFF256D85), Color(0xFF7A5CFA)],
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => PatientDashboard(careState: _careState),
+                          builder: (_) =>
+                              AuthScreen(role: 'patient', careState: _careState),
                         ),
                       ),
                     ),
@@ -94,7 +91,8 @@ class _DashboardShellState extends State<DashboardShell>
                       colors: const [Color(0xFF1B7F5C), Color(0xFFE28413)],
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => CaretakerDashboard(careState: _careState),
+                          builder: (_) =>
+                              AuthScreen(role: 'caretaker', careState: _careState),
                         ),
                       ),
                     ),
@@ -105,7 +103,10 @@ class _DashboardShellState extends State<DashboardShell>
                       icon: Icons.medical_information,
                       colors: const [Color(0xFF14213D), Color(0xFF4A5568)],
                       onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const DoctorDashboard()),
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              AuthScreen(role: 'doctor', careState: _careState),
+                        ),
                       ),
                     ),
                   ],

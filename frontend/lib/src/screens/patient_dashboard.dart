@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../data/demo_data.dart';
 import '../models/care_event.dart';
 import '../services/decision_service.dart';
 import '../state/care_state.dart';
+import '../widgets/logout_button.dart';
 import '../widgets/metric_tile.dart';
 import '../widgets/mini_bar_chart.dart';
 import '../widgets/section_card.dart';
@@ -21,19 +21,62 @@ class PatientDashboard extends StatefulWidget {
 
 class _PatientDashboardState extends State<PatientDashboard> {
   int _index = 0;
-  double _mood = DemoData.currentLog.mood.toDouble();
-  double _sleep = DemoData.currentLog.sleepHours;
-  double _stress = 6;
+  double _mood = 3;
+  double _sleep = 7;
+  double _stress = 5;
   double _energy = 5;
-  bool _breakfast = true;
-  final Set<String> _sideEffects = {'Restlessness', 'Mild nausea'};
+  final Set<String> _sideEffects = {};
 
   final ApiClient _apiClient = ApiClient();
   final List<Map<String, dynamic>> _chatHistory = [
     {'text': 'Hello! I am your wellness coach. How can I support you today?', 'mine': false}
   ];
   final TextEditingController _chatController = TextEditingController();
+  final TextEditingController _journalController = TextEditingController();
   bool _isChatLoading = false;
+  bool _isSubmitting = false;
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _submitCheckin() async {
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    try {
+      await _apiClient.post('/patient/checkin', {
+        'mood': _mood,
+        'stress': _stress,
+        'sleep_hours': _sleep,
+        'energy': _energy,
+        'side_effects': _sideEffects.toList(),
+      });
+      _toast('Check-in saved.');
+    } catch (e) {
+      _toast('Could not save check-in: $e');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Future<void> _submitJournal() async {
+    final text = _journalController.text.trim();
+    if (text.isEmpty || _isSubmitting) {
+      if (text.isEmpty) _toast('Write a sentence first.');
+      return;
+    }
+    setState(() => _isSubmitting = true);
+    try {
+      await _apiClient.post('/patient/journal', {'entry': text});
+      _journalController.clear();
+      _toast('Journal entry saved.');
+    } catch (e) {
+      _toast('Could not save journal entry: $e');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
 
   static const _sideEffectOptions = [
     'Restlessness',
@@ -75,6 +118,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
           ),
         ),
         centerTitle: true,
+        actions: const [LogoutButton()],
       ),
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 260),
@@ -110,7 +154,14 @@ class _PatientDashboardState extends State<PatientDashboard> {
   }
 
   Widget _checkIn(BuildContext context) {
-    final snapshot = const DecisionService().evaluate(DemoData.currentLog);
+    final snapshot = const DecisionService().evaluate(DailyLog(
+      mood: _mood.round(),
+      sleepHours: _sleep,
+      medicationTaken: widget.careState.medicationAligned,
+      sideEffects: _sideEffects.toList(),
+      journal: '',
+      caretakerValidated: widget.careState.caretakerMedicationConfirmed,
+    ));
 
     return ListView(
       key: const ValueKey('patient-checkin'),
@@ -163,11 +214,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Check-in submitted!')),
-                    );
-                  },
+                  onPressed: _isSubmitting ? null : _submitCheckin,
                   child: const Text('Submit Check-in'),
                 ),
               ),
@@ -212,9 +259,10 @@ class _PatientDashboardState extends State<PatientDashboard> {
           child: Column(
             children: [
               TextField(
+                controller: _journalController,
                 minLines: 8,
                 maxLines: 12,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Today I noticed...',
                   hintText:
                       'What changed in your body, sleep, mood, thoughts, or routine?',
@@ -224,11 +272,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Journal entry saved!')),
-                    );
-                  },
+                  onPressed: _isSubmitting ? null : _submitJournal,
                   child: const Text('Submit Journal'),
                 ),
               ),
@@ -256,6 +300,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
   @override
   void dispose() {
     _chatController.dispose();
+    _journalController.dispose();
     super.dispose();
   }
 
@@ -270,31 +315,30 @@ class _PatientDashboardState extends State<PatientDashboard> {
     });
 
     try {
-      final response = await _apiClient.post('/patient/chat', {
-        'patient_id': 1, // Hardcoded for demo since Auth is skipped
-        'query': text,
-      });
-      
+      // The server identifies the patient from the login token.
+      final response = await _apiClient.post('/patient/chat', {'query': text});
+      if (!mounted) return;
       setState(() {
         _chatHistory.add({'text': response['response'] ?? 'No response', 'mine': false});
+        if (response['input_handling'] == 'condensed') {
+          _chatHistory.add({
+            'text': 'Note: your message was long, so it was condensed before I read it. '
+                'The full text has been saved.',
+            'mine': false,
+          });
+        }
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _chatHistory.add({
-          'text': 'Error: ${e.toString().replaceAll("Exception: ", "")}',
-          'mine': false,
-        });
+        _chatHistory.add({'text': 'Error: $e', 'mine': false});
       });
     } finally {
-      setState(() {
-        _isChatLoading = false;
-      });
+      if (mounted) setState(() => _isChatLoading = false);
     }
   }
 
   Widget _rag(BuildContext context) {
-    final snapshot = const DecisionService().evaluate(DemoData.currentLog);
-
     return ListView(
       key: const ValueKey('patient-rag'),
       padding: const EdgeInsets.all(16),

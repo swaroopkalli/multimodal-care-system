@@ -6,23 +6,30 @@ class ArchitectureScreen extends StatelessWidget {
   const ArchitectureScreen({super.key});
 
   static const _layers = [
-    ('Input Layer', 'Patient check-ins + caretaker validation'),
-    ('Data Layer', 'Structured logs, side effects, journal text'),
-    ('Rule Engine', 'Safety guardrails and escalation triggers'),
-    ('Stress Engine', 'Risk scoring from behavior and simulated signals'),
-    ('RAG System', 'FAISS retrieval grounded in onboarding knowledge'),
-    ('Decision Layer', 'Normal, Monitor, or Escalate'),
+    ('Input Layer', 'Patient check-ins, journal, caretaker observations, wearable events'),
+    ('Data Layer', 'PostgreSQL (records), Redis (live wearable values), Neo4j (graph + vectors)'),
+    ('Wearable Processing', 'Validation, time-aware EWMA smoothing, daily rollups, anomaly detection'),
+    ('Guardrails', 'Independent input and output checks: no prescribing, dosing or diagnoses'),
+    ('RAG System', 'Patient-scoped Neo4j vector retrieval feeding a local Ollama model'),
+    ('Response', 'Diagnostic-support summaries only; clinicians make decisions'),
   ];
 
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('System architecture')),
+      body: _content(context),
+    );
+  }
+
+  Widget _content(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         SectionCard(
           title: 'System Positioning',
           child: Text(
-            'A modular, multi-actor mental health monitoring system where structured behavioral data drives a rule-based safety engine, while RAG enhances user understanding.',
+            'A multi-actor mental-health monitoring and diagnostic-support system. Smoothed wearable signals and patient-reported data are retrieved per patient to ground a local language model, with independent safety checks around every exchange.',
             style: Theme.of(context).textTheme.bodyLarge,
           ),
         ),
@@ -44,14 +51,14 @@ class ArchitectureScreen extends StatelessWidget {
         const SectionCard(
           title: 'Wearable Strategy',
           child: Text(
-            'MVP: manual inputs feed derived signals and simulated wearable values into the same stress engine. Future versions can swap simulated values for real wearable integrations without changing the decision layer.',
+            'Events flow through a Redis Stream, are validated and EWMA-smoothed, stored in PostgreSQL and mirrored to Redis for live reads. Today the events come from a simulator and are labelled as synthetic everywhere; real devices can use the same contract.',
           ),
         ),
         const SizedBox(height: 12),
         const SectionCard(
           title: 'Backend Contract',
           child: Text(
-            'Flutter calls Flask APIs for logs, decisions, RAG guidance, alerts, and summaries. Supabase stores structured records, FAISS serves local retrieval, and Groq or OpenAI formats grounded responses.',
+            'Flutter calls authenticated Flask APIs. PostgreSQL is the system of record, Redis serves live vitals, Neo4j serves patient-scoped vector retrieval, and Ollama runs the model locally.',
           ),
         ),
       ],

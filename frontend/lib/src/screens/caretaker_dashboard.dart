@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../data/demo_data.dart';
+import '../api/api_client.dart';
 import '../models/care_event.dart';
-import '../services/decision_service.dart';
 import '../state/care_state.dart';
-import '../widgets/metric_tile.dart';
-import '../widgets/mini_bar_chart.dart';
+import '../widgets/logout_button.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_chip.dart';
-import '../api/api_client.dart';
 
 class CaretakerDashboard extends StatefulWidget {
   const CaretakerDashboard({required this.careState, super.key});
@@ -21,15 +18,62 @@ class CaretakerDashboard extends StatefulWidget {
 
 class _CaretakerDashboardState extends State<CaretakerDashboard> {
   int _index = 0;
-  bool _didntSleep = true;
-  bool _restless = true;
+  bool _didntSleep = false;
+  bool _restless = false;
   bool _seemsBetter = false;
 
   final ApiClient _apiClient = ApiClient();
+  List<dynamic> _patients = [];
+  int? _patientId;
+  Map<String, dynamic>? _overview;
+  String? _loadError;
+
   bool _isLoadingSummary = false;
   String? _ragSummary;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPatients();
+  }
+
+  Future<void> _loadPatients() async {
+    try {
+      final response = await _apiClient.get('/patients');
+      if (!mounted) return;
+      final list = (response['patients'] as List?) ?? [];
+      setState(() {
+        _patients = list;
+        _patientId = list.isEmpty ? null : list.first['id'] as int;
+      });
+      await _loadOverview();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not load patients: $e');
+    }
+  }
+
+  Future<void> _loadOverview() async {
+    final id = _patientId;
+    if (id == null) return;
+    try {
+      final response = await _apiClient.get('/patients/$id/summary');
+      if (!mounted) return;
+      setState(() {
+        _overview = response;
+        _ragSummary = null;
+        _loadError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadError = 'Could not load patient data: $e');
+    }
+  }
 
   Future<void> _fetchRagSummary() async {
+    final id = _patientId;
+    if (id == null) return;
     setState(() {
       _isLoadingSummary = true;
       _ragSummary = null;
@@ -37,22 +81,44 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
 
     try {
       final response = await _apiClient.post('/staff/chat', {
-        'patient_id': 1,
+        'patient_id': id,
         'query': 'Please provide a concise clinical summary of this patient.',
       });
-      setState(() {
-        _ragSummary = response['response'];
-      });
+      if (!mounted) return;
+      setState(() => _ragSummary = response['response'] as String?);
     } catch (e) {
-      setState(() {
-        _ragSummary = 'Error fetching summary: $e';
-      });
+      if (!mounted) return;
+      setState(() => _ragSummary = 'Error fetching summary: $e');
     } finally {
-      setState(() {
-        _isLoadingSummary = false;
-      });
+      if (mounted) setState(() => _isLoadingSummary = false);
     }
   }
+
+  Future<void> _saveObservations() async {
+    final id = _patientId;
+    if (id == null || _isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      await _apiClient.post('/caretaker/observations', {
+        'patient_id': id,
+        'did_not_sleep': _didntSleep,
+        'restless': _restless,
+        'seems_better': _seemsBetter,
+        'medication_confirmed': widget.careState.caretakerMedicationConfirmed,
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Observations saved.')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not save observations: $e')));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  List<dynamic> get _anomalies => (_overview?['anomalies'] as List?) ?? [];
 
   @override
   Widget build(BuildContext context) {
@@ -66,13 +132,36 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
       appBar: AppBar(
         title: const Text('Caretaker Portal'),
         centerTitle: true,
+        actions: const [LogoutButton()],
       ),
-      body: AnimatedBuilder(
-        animation: widget.careState,
-        builder: (context, _) => AnimatedSwitcher(
-          duration: const Duration(milliseconds: 260),
-          child: pages[_index],
-        ),
+      body: Column(
+        children: [
+          if (_patients.length > 1)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: DropdownButton<int>(
+                isExpanded: true,
+                value: _patientId,
+                items: [
+                  for (final p in _patients)
+                    DropdownMenuItem(value: p['id'] as int, child: Text(p['name'] as String)),
+                ],
+                onChanged: (value) {
+                  setState(() => _patientId = value);
+                  _loadOverview();
+                },
+              ),
+            ),
+          Expanded(
+            child: AnimatedBuilder(
+              animation: widget.careState,
+              builder: (context, _) => AnimatedSwitcher(
+                duration: const Duration(milliseconds: 260),
+                child: pages[_index],
+              ),
+            ),
+          ),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
@@ -98,8 +187,24 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
     );
   }
 
+  Widget _noPatient(Key key) {
+    return ListView(
+      key: key,
+      padding: const EdgeInsets.all(16),
+      children: [
+        SectionCard(
+          title: 'No patient',
+          child: Text(_loadError ??
+              'No patients are assigned to you yet. Patients appear here when they '
+                  'register with your username as their caretaker.'),
+        ),
+      ],
+    );
+  }
+
   Widget _dashboard(BuildContext context) {
-    final snapshot = const DecisionService().evaluate(DemoData.currentLog);
+    if (_patientId == null) return _noPatient(const ValueKey('caretaker-dashboard'));
+    final live = _overview?['live'] as Map<String, dynamic>?;
 
     return ListView(
       key: const ValueKey('caretaker-dashboard'),
@@ -107,7 +212,9 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
       children: [
         SectionCard(
           title: 'Patient Status',
-          action: StatusChip(level: snapshot.riskLevel),
+          action: StatusChip(
+            level: _anomalies.isEmpty ? RiskLevel.normal : RiskLevel.monitor,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -118,7 +225,12 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
                     ),
               ),
               const SizedBox(height: 10),
-              Text(snapshot.caretakerAlert),
+              Text(live == null
+                  ? 'No live wearable reading yet.'
+                  : 'Latest heart rate ${live['heartrate']} bpm'
+                      '${live['is_simulated'] == true ? ' (simulated data)' : ''}.'),
+              if (_loadError != null)
+                Text(_loadError!, style: const TextStyle(color: Colors.redAccent)),
             ],
           ),
         ),
@@ -131,7 +243,7 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Confirm medication was taken'),
-                subtitle: const Text('Shared with patient portal'),
+                subtitle: const Text('Saved with your next observation'),
                 value: widget.careState.caretakerMedicationConfirmed,
                 onChanged: widget.careState.setCaretakerMedicationConfirmed,
               ),
@@ -146,32 +258,25 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Did not sleep'),
                 value: _didntSleep,
-                onChanged: (value) =>
-                    setState(() => _didntSleep = value ?? false),
+                onChanged: (value) => setState(() => _didntSleep = value ?? false),
               ),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Restless'),
                 value: _restless,
-                onChanged: (value) =>
-                    setState(() => _restless = value ?? false),
+                onChanged: (value) => setState(() => _restless = value ?? false),
               ),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Seems better'),
                 value: _seemsBetter,
-                onChanged: (value) =>
-                    setState(() => _seemsBetter = value ?? false),
+                onChanged: (value) => setState(() => _seemsBetter = value ?? false),
               ),
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Observations saved.')),
-                    );
-                  },
+                  onPressed: _isSaving ? null : _saveObservations,
                   child: const Text('Save Observations'),
                 ),
               ),
@@ -183,35 +288,38 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
   }
 
   Widget _alerts(BuildContext context) {
+    if (_patientId == null) return _noPatient(const ValueKey('caretaker-alerts'));
     return ListView(
       key: const ValueKey('caretaker-alerts'),
       padding: const EdgeInsets.all(16),
       children: [
         SectionCard(
           title: 'Alerts',
-          child: Column(
-            children: DemoData.insights
-                .map(
-                  (insight) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      insight.level == RiskLevel.monitor
-                          ? Icons.warning_amber
-                          : Icons.check_circle_outline,
-                    ),
-                    title: Text(insight.title),
-                    subtitle: Text(insight.body),
-                    trailing: StatusChip(level: insight.level),
-                  ),
-                )
-                .toList(),
-          ),
+          child: _anomalies.isEmpty
+              ? const Text('No unusual changes detected against this patient\'s own history.')
+              : Column(
+                  children: _anomalies
+                      .map(
+                        (a) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.warning_amber),
+                          title: Text('${a['signal']} ${a['direction']} on ${a['day']}'),
+                          subtitle: Text(
+                              'Observed ${(a['observed'] as num).toStringAsFixed(0)}, usual '
+                              '${(a['baseline'] as num).toStringAsFixed(0)}'
+                              '${a['is_simulated'] == true ? ' · simulated data' : ''}'),
+                          trailing: StatusChip(level: RiskLevel.monitor),
+                        ),
+                      )
+                      .toList(),
+                ),
         ),
       ],
     );
   }
 
   Widget _summary(BuildContext context) {
+    if (_patientId == null) return _noPatient(const ValueKey('caretaker-rag-summary'));
     return ListView(
       key: const ValueKey('caretaker-rag-summary'),
       padding: const EdgeInsets.all(16),
@@ -229,7 +337,10 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   icon: _isLoadingSummary
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.analytics),
                   label: const Text('Generate Patient Summary'),
                   onPressed: _isLoadingSummary ? null : _fetchRagSummary,

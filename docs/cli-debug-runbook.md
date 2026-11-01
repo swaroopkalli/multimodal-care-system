@@ -1,153 +1,48 @@
-# CLI pipeline and debugging runbook
+# Runbook
 
-This runs the wearable simulator and subscribers without the Flutter UI. Use synthetic data only. Redis Pub/Sub is transient, so start both subscribers before the simulator.
+All commands run from the repository root unless noted. Configuration: copy `.env.example` to `.env`.
 
-## 1. Prepare Python
+## Start everything
 
 ```bash
-cd backend/wearable_ingestion
-python3 -m venv .venv
-source .venv/bin/activate
 python -m pip install -r requirements.txt
+docker compose up -d redis neo4j            # waits for health checks: docker compose ps
+ollama pull llama3.2:3b && ollama pull nomic-embed-text    # once; Ollama runs on the host (port 11434)
+python backend/db.py                        # create/upgrade the schema (idempotent)
+
+cd backend && python app.py                 # Flask API on http://127.0.0.1:5000, also mirrors rows to Neo4j
+cd backend/wearable_ingestion && python worker.py      # wearable consumer
+cd backend/wearable_ingestion && python simulator.py   # synthetic events (optional)
+
+cd frontend && flutter run -d chrome        # or: flutter run -d web-server --web-port 8081
 ```
 
-The simulator and subscribers automatically load the repository-root `.env`.
-Your existing root `.env` already contains the required `INGESTION_DB_*`, Redis,
-and simulator variables. Keep passwords out of shell commands and logs. Shell
-variables override `.env`; an optional `backend/wearable_ingestion/.env` can
-provide settings if needed.
+First-time data: register a doctor and a caretaker in their portals, then register a patient with their
+usernames in the optional fields so they are assigned. Set `SIMULATOR_PATIENT_IDS` to that patient's id.
 
-> **Schema setup:** the ingestion subscriber requires `wearable_data.event_id`
-> to be a unique UUID. The included schema creates the tables or adds that
-> column/index to an existing table. Apply it once to the same PostgreSQL DB
-> configured by root `.env` before starting the subscriber:
->
-> ```bash
-> cd backend/wearable_ingestion
-> source .venv/bin/activate
-> python3 apply_schema.py
-> ```
->
-> Alternatively, when using the application DB variables (`DB_*`), run
-> `python3 backend/db.py` from the repository root; `create_tables()` now adds
-> the compatible column and unique index. Existing tables and rows are kept.
+Existing data: `python backend/wearable_ingestion/backfill.py` (smoothing, rollups, anomalies) and
+`cd backend && python -m services.graph.sync backfill` (mirror existing notes/chats/windows to Neo4j).
 
-## 2. Start Redis
+## Verify
 
 ```bash
-cd backend/wearable_ingestion
-docker compose -f compose.yaml up -d redis
-docker compose -f compose.yaml ps
-docker exec mindbridge_ingestion_redis redis-cli ping
+python -m backend_tests                  # everything (about 10-15 min; the end-to-end check calls the real model)
+python -m backend_tests --only guard     # one area, e.g. 7 / Guardrails
+python -m backend_tests --strict         # unavailable optional services become FAIL
 ```
 
-Expected: Redis is `healthy` and prints `PONG`.
+PASS/FAIL/SKIP per check; SKIP means an optional service (Redis, Neo4j, Ollama) was not reachable, FAIL
+includes PostgreSQL being unreachable. Fixtures use usernames starting `__bt_` and are removed afterwards.
 
-## 3. Start subscribers in separate terminals
+## Diagnose
 
-In each terminal, run `cd backend/wearable_ingestion` and `source .venv/bin/activate`.
-
-**Terminal A — Redis cache:**
-
-```bash
-python -u subscriber_redis_cache.py
-```
-
-Expect `Connected to Redis` and `Subscribed to channel 'wearable:vitals'`.
-
-**Terminal B — PostgreSQL (after DB/schema configuration):**
-
-```bash
-python -u subscriber_postgres.py
-```
-
-Expect `Connected to PostgreSQL` and `Subscribed to Redis channel 'wearable:vitals'`. Missing-variable errors mean root `.env` is missing DB settings. Repeated connection errors indicate host, port, credentials, network, or SSL problems; passwords are not printed.
-
-## 4. Start simulator (Terminal C)
-
-```bash
-cd backend/wearable_ingestion
-source .venv/bin/activate
-SIMULATOR_HEART_RATE_SCENARIO=normal python -u simulator.py
-```
-
-The simulator should log `Simulator starting`, then `Published event_id=... patient=... seq=... hr=... subscribers=...`. With both subscribers listening, subscriber count should usually be 2; cache-only mode should show 1. Match the event ID across logs:
-
-```text
-[SIMULATOR] Published event_id=ab12... patient=1 seq=1 hr=...
-[REDIS-SUB] Cache updated — patient=1 ... event_id=ab12...
-[PG-SUB] Persisted event_id=ab12... patient=1 ...
-```
-
-Stop foreground processes with `Ctrl-C`. For synthetic scenarios, restart with `SIMULATOR_HEART_RATE_SCENARIO=elevated` or `low`. These are not clinical readings.
-
-## 5. Inspect live Redis state
-
-```bash
-docker exec mindbridge_ingestion_redis redis-cli HGETALL patient:1:vitals:latest
-docker exec mindbridge_ingestion_redis redis-cli PUBSUB NUMSUB wearable:vitals
-```
-
-The hash should contain `heartrate`, `sleep_minutes`, `screentime_minutes`, `pedometer`, `measured_at`, and `event_id`. Sleep and screen time stay constant until the configured behavioral interval expires. `PUBSUB NUMSUB` shows current listeners, not historical messages.
-
-If PostgreSQL is configured with a compatible schema, inspect rows with `psql` or the Supabase SQL editor:
-
-```bash
-psql "$DATABASE_URL" -c "SELECT id, patient_id, timestamp, heartrate, sleep_minutes, screentime_minutes, event_id FROM wearable_data ORDER BY timestamp DESC LIMIT 10;"
-```
-
-Set `DATABASE_URL` from a secure credential source first; do not put credentials directly in shell history.
-
-## 6. CLI model-backed chat (optional)
-
-From the repository root:
-
-```bash
-docker compose up -d ollama
-docker compose exec ollama ollama pull <model-tag>
-docker compose exec ollama ollama list
-curl -fsS http://127.0.0.1:11434/api/tags
-```
-
-Then start Flask in another terminal:
-
-```bash
-cd backend
-export OLLAMA_MODEL='<model-tag>'
-export OLLAMA_BASE_URL='http://localhost:11434'
-python3 app.py
-```
-
-This repository has no health endpoint, so `GET /` returning 404 still confirms Flask is listening:
-
-```bash
-curl -i http://127.0.0.1:5000/
-```
-
-Chat endpoints also require the application PostgreSQL database and a valid patient row; the server alone is not an end-to-end chat smoke test.
-
-## 7. Offline tests
-
-```bash
-cd backend/wearable_ingestion
-source .venv/bin/activate
-python -m unittest test_simulator.py
-cd ../..
-PYTHONPATH=backend python3 -m unittest services.test_llm
-```
-
-`test_pipeline.py` requires live Redis and PostgreSQL. It writes synthetic rows if DB credentials and schema are available.
-
-## Quick diagnosis
-
-| Observation | Likely cause / check |
+| Symptom | Check |
 |---|---|
-| Simulator says `subscribers=0` | Start subscribers first; check Redis host, port, and channel. Pub/Sub does not replay missed events. |
-| Cache subscriber has no `Cache updated` | Check simulator channel and subscriber count; inspect validation warnings. |
-| Cache key is absent | Check patient ID and cache logs; run `redis-cli KEYS 'patient:*:vitals:latest'`. |
-| DB subscriber exits immediately | Missing `INGESTION_DB_HOST`, `INGESTION_DB_USER`, or `INGESTION_DB_PASSWORD`. |
-| DB subscriber retries connection | Check host, port, credentials, network access, and SSL mode. |
-| `UndefinedColumn event_id` | Database does not have the ingestion subscriber's required column. |
-| Unknown patient / rejected event | `SIMULATOR_PATIENT_IDS` must exist in the ingestion database. |
-| Ollama model unavailable | Pull the exact `OLLAMA_MODEL` tag and verify with `ollama list`. |
-| Flask chat returns 500/unavailable | Check Ollama status, `OLLAMA_BASE_URL`, model tag, and Flask logs. |
+| Login returns 500 / tokens rejected | `JWT_SECRET_KEY` set (>= 32 chars)? Restarting without it invalidates tokens |
+| Chat returns 503 | `ollama list` shows `OLLAMA_MODEL`? `curl http://localhost:11434/api/tags` |
+| Ollama "cudaMalloc failed" | another model is loaded: `ollama ps`; lower `OLLAMA_NUM_CTX` (e.g. 4096) |
+| Redis connection closed immediately (Docker Desktop) | `docker compose restart redis` re-creates the port mapping |
+| Neo4j sync pending | `docker compose ps`; `cd backend && python -m services.graph.sync reconcile` / `drain` |
+| Worker idle | is the simulator publishing to the same `WEARABLE_STREAM`? `redis-cli -p 6380 XLEN wearable:events` |
+| Rejected events | `redis-cli -p 6380 XRANGE wearable:dead - +` (reason is stored per entry) |
+| Retrieval status `unavailable` in chat replies | Neo4j or the embedding model is down; chat still works with pinned facts only |

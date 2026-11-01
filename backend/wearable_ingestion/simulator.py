@@ -51,6 +51,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import redis
+
 from env_config import load_ingestion_environment
 
 # ---------------------------------------------------------------------------
@@ -74,7 +76,7 @@ log = logging.getLogger(__name__)
 
 REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_CHANNEL: str = os.getenv("REDIS_CHANNEL", "wearable:vitals")
+REDIS_CHANNEL: str = os.getenv("WEARABLE_STREAM", "wearable:events")   # a Redis Stream (durable, replayable)
 INTERVAL: float = float(os.getenv("SIMULATOR_INTERVAL_SECONDS", "5"))
 DEVICE_ID: str = os.getenv("SIMULATOR_DEVICE_ID", "sim-device-001")
 BEHAVIORAL_UPDATE_INTERVAL: float = float(os.getenv("BEHAVIORAL_UPDATE_INTERVAL_SECONDS", "86400"))
@@ -142,6 +144,8 @@ def _generate_vitals(patient_id: int, sequence: int, state: PatientSimulationSta
         "sequence": sequence,
         "measured_at": datetime.now(timezone.utc).isoformat(),
         "simulation": True,           # ALWAYS True — never real data
+        "source": "simulator",
+        "schema_version": 2,
 
         # Columns matching wearable_data schema (backend/db.py)
         "pedometer": random.randint(100, 800),          # steps per interval
@@ -157,10 +161,6 @@ def _generate_vitals(patient_id: int, sequence: int, state: PatientSimulationSta
 
 def _connect_redis():
     """Return a Redis client.  Blocks until connection succeeds."""
-    # Import only when connecting so generator helpers can be used offline.
-    # pyrefly: ignore[missing-import]
-    import redis
-
     backoff = 1.0
     while True:
         try:
@@ -212,16 +212,15 @@ def run() -> None:
         payload = json.dumps(event)
 
         try:
-            subscriber_count = client.publish(REDIS_CHANNEL, payload)
+            entry_id = client.xadd(REDIS_CHANNEL, {"data": payload}, maxlen=100_000, approximate=True)
             log.info(
-                "Published event_id=%s  patient=%s  seq=%s  hr=%s bpm  "
-                "sleep=%s min  subscribers=%s",
+                "Published event_id=%s  patient=%s  seq=%s  hr=%s bpm  sleep=%s min  stream_id=%s",
                 event["event_id"][:8],
                 patient_id,
                 seq,
                 event["heartrate"],
                 event["sleep_minutes"],
-                subscriber_count,
+                entry_id,
             )
         except (redis.ConnectionError, redis.TimeoutError) as exc:
             log.warning("Redis publish failed: %s — reconnecting…", exc)

@@ -37,7 +37,9 @@ class SimulatorTests(unittest.TestCase):
                             (other["sleep_minutes"], other["screentime_minutes"]))
         self.assertEqual(set(first), {"event_id", "device_id", "patient_id", "sequence",
                                       "measured_at", "simulation", "pedometer", "sleep_minutes",
-                                      "screentime_minutes", "heartrate"})
+                                      "screentime_minutes", "heartrate", "source", "schema_version"})
+        self.assertIs(first["simulation"], True)
+        self.assertEqual(first["source"], "simulator")
 
 
 if __name__ == "__main__":
