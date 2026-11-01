@@ -51,6 +51,7 @@ ENV/
 env.bak/
 venv.bak/
 __pypackages__/
+.env.example
 
 # Python app/runtime files
 pip-log.txt
