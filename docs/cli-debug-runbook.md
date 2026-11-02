@@ -100,28 +100,24 @@ Set `DATABASE_URL` from a secure credential source first; do not put credentials
 
 ## 6. CLI model-backed chat (optional)
 
-From the repository root:
+Ensure your `NVIDIA_API_KEY` is configured in `.env` (or exported in your shell):
 
 ```bash
-docker compose up -d ollama
-docker compose exec ollama ollama pull <model-tag>
-docker compose exec ollama ollama list
-curl -fsS http://127.0.0.1:11434/api/tags
+export NVIDIA_API_KEY='nvapi-...'
+export NVIDIA_MODEL='minimaxai/minimax-m3.1-flash'
 ```
 
 Then start Flask in another terminal:
 
 ```bash
 cd backend
-export OLLAMA_MODEL='<model-tag>'
-export OLLAMA_BASE_URL='http://localhost:11434'
 python3 app.py
 ```
 
 This repository has no health endpoint, so `GET /` returning 404 still confirms Flask is listening:
 
 ```bash
-curl -i http://127.0.0.1:5000/
+curl -i http://127.0.0.1:5001/
 ```
 
 Chat endpoints also require the application PostgreSQL database and a valid patient row; the server alone is not an end-to-end chat smoke test.
@@ -149,5 +145,5 @@ PYTHONPATH=backend python3 -m unittest services.test_llm
 | DB subscriber retries connection | Check host, port, credentials, network access, and SSL mode. |
 | `UndefinedColumn event_id` | Database does not have the ingestion subscriber's required column. |
 | Unknown patient / rejected event | `SIMULATOR_PATIENT_IDS` must exist in the ingestion database. |
-| Ollama model unavailable | Pull the exact `OLLAMA_MODEL` tag and verify with `ollama list`. |
-| Flask chat returns 500/unavailable | Check Ollama status, `OLLAMA_BASE_URL`, model tag, and Flask logs. |
+| NVIDIA API authentication error (401) | Verify that `NVIDIA_API_KEY` in `.env` is valid and active. |
+| Flask chat returns 500/unavailable | Check `NVIDIA_API_KEY`, network connectivity, model tag, and Flask terminal traceback. |

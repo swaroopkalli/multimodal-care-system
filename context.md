@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 
-MindBridge is a multi-actor mental health monitoring and support system designed to help patients, caregivers, and clinicians monitor wellness patterns, interpret wearable-based signals, and receive AI-assisted guidance without replacing professional care. The project combines a Flutter frontend with a Python Flask backend, relational patient data, and locally hosted Ollama conversational assistance.
+MindBridge is a multi-actor mental health monitoring and support system designed to help patients, caregivers, and clinicians monitor wellness patterns, interpret wearable-based signals, and receive AI-assisted guidance without replacing professional care. The project combines a Flutter frontend with a Python Flask backend, relational patient data, and NVIDIA NIM cloud inference (MiniMax-M3.1-Flash) for conversational assistance.
 
 The product is positioned as a decision and triage assistant rather than a standalone LLM app. It blends:
 
@@ -84,10 +84,9 @@ Primary tables:
 - `werkzeug` for password hashing and auth helpers
 
 ### AI / LLM stack
-- Local Ollama HTTP API (`/api/chat`)
-- Model tag configured via `OLLAMA_MODEL`
-- Endpoint configured via `OLLAMA_BASE_URL` (default `http://localhost:11434`)
-- No external LLM API key is required for inference
+- NVIDIA NIM Cloud API (`https://integrate.api.nvidia.com/v1/chat/completions`)
+- Model configured via `NVIDIA_MODEL` (`minimaxai/minimax-m3.1-flash`)
+- API key configured via `NVIDIA_API_KEY`
 - Prompting style includes:
   - clinical analysis instructions for staff
   - empathetic wellness coaching for patient responses
@@ -132,7 +131,7 @@ The flow is:
    - recent doctor notes
 2. It transforms the data into a natural-language summary string.
 3. The summary is stored in `patient_contexts`.
-4. The staff chatbot then sends that summary plus the user query to the configured Ollama model.
+4. The staff chatbot then sends that summary plus the user query to the configured NVIDIA NIM model.
 5. The LLM generates a clinical summary or analysis grounded in the patient context.
 
 This is effectively a retrieval-and-grounding workflow, even though it is not a vector-index retrieval system.
@@ -168,7 +167,7 @@ The frontend README and architecture screen mention:
 Those are described as planned architecture or product framing, but the code currently implemented in this workspace uses:
 - PostgreSQL storage
 - Flask API retrieval
-- Ollama API generation
+- NVIDIA NIM API generation
 - contextual summarization instead of a vector store
 
 ## 7. Wearable and Stress Signal Logic
@@ -280,7 +279,7 @@ At present, the codebase is best described as a grounded clinical assistant prot
 - doctor note ingestion
 - wearable trend ingestion
 - patient-context summarization
-- Ollama-powered chat responses
+- NVIDIA NIM-powered chat responses (MiniMax-M3.1-Flash)
 - stateful patient conversation history
 - Flutter UI for demo flows
 
@@ -299,7 +298,7 @@ MindBridge is a prototype for a mental-health monitoring and support platform th
 - relational patient tracking
 - wearable and behavioral signals
 - RAG-style contextual grounding from patient records
-- role-specific AI assistance via Ollama
+- role-specific AI assistance via NVIDIA NIM
 - safety-focused prompts and risk heuristics
 
 The most important system design pattern in the current code is: structured context generation + grounded response synthesis. This is a useful and practical hybrid pattern for early-stage clinical AI tooling, even without a full vector database and formal metrics pipeline.

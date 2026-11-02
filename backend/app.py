@@ -1,5 +1,6 @@
 import os
 
+# pyrefly: ignore[missing-import]
 from flask import Flask, jsonify
 from flask_cors import CORS
 
@@ -23,4 +24,4 @@ app.add_url_rule("/api/patient/chat", view_func=patient_chat, methods=["POST"])
 
 if __name__ == "__main__":
     create_tables()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5001, debug=True)

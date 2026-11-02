@@ -1,3 +1,4 @@
+# pyrefly: ignore[missing-import]
 from flask import request, jsonify
 from db import get_db_connection
 from services.context import get_latest_patient_context
@@ -67,6 +68,8 @@ def staff_chat():
         log_chat("staff", patient_id, query, response_text)
         return jsonify({"response": response_text}), 200
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 def patient_chat():
@@ -84,4 +87,6 @@ def patient_chat():
         log_chat("patient", patient_id, query, response_text)
         return jsonify({"response": response_text}), 200
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500

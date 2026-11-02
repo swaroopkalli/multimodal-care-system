@@ -5,7 +5,7 @@
 - The frontend is Flutter/Dart (`frontend/lib/main.dart`, `frontend/lib/src/app.dart`) with patient, caretaker, and doctor dashboards. Its `DecisionService` is a local demo heuristic; it is not called by the Python chat backend.
 - The backend is a Flask JSON API (`backend/app.py`) with PostgreSQL access through psycopg2 (`backend/db.py`). Authentication routes create role-specific JWTs, though the chat handlers themselves do not enforce JWT authorization in their current code.
 - Wearable ingestion is a separate Python process in `backend/wearable_ingestion`: simulator publishes JSON over Redis Pub/Sub, and independent subscribers persist measurements to PostgreSQL and refresh Redis latest-vitals cache. Its Compose file runs only Redis.
-- No backend Dockerfile or application Compose service exists. The root Compose file provides Ollama as a separate local model service, bound to loopback for the host-run Flask backend.
+- No backend Dockerfile or application Compose service exists. LLM inference runs via NVIDIA NIM cloud endpoints (MiniMax-M3.1-Flash).
 
 ## LLM request flow
 
@@ -31,13 +31,13 @@ Heart rate was an independent uniform integer 58–105 BPM. Sleep (200–540 min
 
 JWT login exists, password hashing uses Werkzeug, and CORS is enabled globally. Chat route authorization is not applied in the inspected handlers; this phase leaves that behavior unchanged. Chat data and patient context are persisted in PostgreSQL. Logs in chat handlers are plain console error messages; there is no centralized monitoring. The current LLM call is synchronous and not streamed.
 
-The Ollama integration preserves `generate_response` and `generate_chat_response`, prompts, and chat API response JSON. It sends non-streaming `/api/chat` messages, uses configurable model/URL/timeouts, and bounds retries. In Docker, backend callers should configure `OLLAMA_BASE_URL=http://ollama:11434`; local host callers default to localhost. This repository has no backend container to attach to Compose yet. Model tags must be pulled explicitly and Ollama readiness does not imply the model is present.
+The NVIDIA NIM integration preserves `generate_response` and `generate_chat_response`, prompts, and chat API response JSON. It sends non-streaming OpenAI-compatible `/chat/completions` messages, uses configurable model/URL/timeouts, and bounds retries.
 
 Simulator event keys, integer units, and publication cadence remain unchanged. Per-patient state makes behavior metrics independent; the 24-hour default preserves nightly sleep-session and daily screen-time aggregate semantics. State is in memory and resets on simulator restart. Heart-rate scenarios are configurable as `normal`, `elevated`, or `low`, generated as mean-reverting synthetic series, not validated medical observations. The ingestion schema adds a unique `event_id` UUID column/index idempotently; `backend/db.py` applies the same additive migration when creating app tables.
 
 ## Minimal implementation plan
 
-1. Replace the isolated Gemini SDK implementation with an Ollama HTTP client while preserving the two public functions and callers.
-2. Add local Compose model persistence/health behavior, safe environment examples, and explicit model pull instructions.
+1. Replace the provider client in `backend/services/llm.py` with an NVIDIA NIM client (MiniMax-M3.1-Flash) while preserving the two public functions and callers.
+2. Provide safe environment examples and instructions for configuring `NVIDIA_API_KEY`.
 3. Add per-patient simulator state, configurable heart-rate scenario, and daily behavioral aggregate persistence without changing event schema.
-4. Add offline unit coverage for simulator and mocked HTTP coverage for Ollama; document that no clinical validity is implied.
+4. Add offline unit coverage for simulator and mocked HTTP coverage for NVIDIA NIM; document that no clinical validity is implied.

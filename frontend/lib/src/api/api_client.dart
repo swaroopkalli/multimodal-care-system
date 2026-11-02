@@ -11,7 +11,7 @@ class ApiClient {
   late String _baseUrl;
 
   ApiClient._internal() {
-    _baseUrl = dotenv.env['BACKEND_URL'] ?? 'http://127.0.0.1:5000/api';
+    _baseUrl = dotenv.env['BACKEND_URL'] ?? 'http://127.0.0.1:5001/api';
     if (!_baseUrl.endsWith('/api')) {
       _baseUrl = '$_baseUrl/api';
     }

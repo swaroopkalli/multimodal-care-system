@@ -1,9 +1,13 @@
 import os
+from pathlib import Path
 import psycopg2
 
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
+# Load .env from repository root or current directory
+_repo_env = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=_repo_env)
 load_dotenv()
 
 def get_db_connection():
