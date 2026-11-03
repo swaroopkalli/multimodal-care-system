@@ -6,6 +6,7 @@ import '../state/care_state.dart';
 import '../widgets/logout_button.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_chip.dart';
+import '../widgets/formatted_text.dart';
 
 class CaretakerDashboard extends StatefulWidget {
   const CaretakerDashboard({required this.careState, super.key});
@@ -330,7 +331,10 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_ragSummary != null) ...[
-                Text(_ragSummary!),
+                FormattedText(
+                  _ragSummary!,
+                  style: const TextStyle(fontSize: 14, height: 1.4),
+                ),
                 const SizedBox(height: 16),
               ],
               SizedBox(

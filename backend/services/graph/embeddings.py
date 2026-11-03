@@ -15,7 +15,7 @@ CHUNK_TOKENS = 400          # well inside the embedding model's window; nothing 
 
 
 def model_name() -> str:
-    return os.getenv("OLLAMA_EMBED_MODEL", "")
+    return os.getenv("NVIDIA_EMBED_MODEL") or os.getenv("LLM_EMBED_MODEL") or os.getenv("OLLAMA_EMBED_MODEL", "")
 
 
 def _embed(prefix: str, text: str) -> list[float]:
@@ -24,6 +24,8 @@ def _embed(prefix: str, text: str) -> list[float]:
         vectors = embed_texts([f"{prefix}{c}" for c in chunks])
     except LLMError as exc:
         raise GraphUnavailable(f"embedding failed: {exc}") from exc
+    if not vectors:
+        raise GraphUnavailable("embedding service is not configured")
     if len(vectors) == 1:
         return vectors[0]
     summed = [sum(col) for col in zip(*vectors)]

@@ -7,6 +7,7 @@ import '../widgets/metric_tile.dart';
 import '../widgets/mini_bar_chart.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_chip.dart';
+import '../widgets/formatted_text.dart';
 
 class DoctorDashboard extends StatefulWidget {
   const DoctorDashboard({super.key});
@@ -345,7 +346,10 @@ class _DoctorPatientDetailState extends State<_DoctorPatientDetail> {
                 if (_aiSummary != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(_aiSummary!),
+                    child: FormattedText(
+                      _aiSummary!,
+                      style: const TextStyle(fontSize: 14, height: 1.4),
+                    ),
                   ),
                 const Text(
                   'Diagnostic support only: it summarises records and trends and never '

@@ -78,8 +78,8 @@ def _patient_medications(patient_id):
 
 
 def _summarize(chunk: str) -> str:
-    return llm._ollama_chat([{"role": "system", "content": budget.CONDENSE_SYSTEM},
-                             {"role": "user", "content": chunk}], 0.1)
+    return llm.chat([{"role": "system", "content": budget.CONDENSE_SYSTEM},
+                     {"role": "user", "content": chunk}], 0.1)
 
 
 def _fit_sections(sections, token_budget):

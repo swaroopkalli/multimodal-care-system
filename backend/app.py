@@ -87,4 +87,4 @@ if __name__ == "__main__":
     debug = os.getenv("FLASK_DEBUG", "0") == "1"
     if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         start_background_services()
-    app.run(host=os.getenv("FLASK_HOST", "127.0.0.1"), port=int(os.getenv("FLASK_PORT", "5000")), debug=debug)
+    app.run(host=os.getenv("FLASK_HOST", "127.0.0.1"), port=int(os.getenv("FLASK_PORT", "5001")), debug=debug)

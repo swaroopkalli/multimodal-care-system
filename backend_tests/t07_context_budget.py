@@ -23,15 +23,24 @@ def requests_carry_num_ctx_and_num_predict_to_ollama():
     class Resp:
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def read(self): return json.dumps({"message": {"content": "ok"}, "prompt_eval_count": 12, "done_reason": "stop"}).encode()
+        def read(self):
+            if llm.is_nvidia_configured():
+                return json.dumps({
+                    "choices": [{"message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 1},
+                }).encode()
+            return json.dumps({"message": {"content": "ok"}, "prompt_eval_count": 12, "done_reason": "stop"}).encode()
 
     def fake(req, timeout=None):
         captured["body"] = json.loads(req.data)
         return Resp()
     with patch("services.llm.urlopen", fake):
         out = llm._ollama_chat_ex([{"role": "user", "content": "hi"}], 0.2)
-    opts = captured["body"]["options"]
-    assert opts["num_ctx"] == llm.context_settings()["num_ctx"] and opts["num_predict"] > 0
+    if "options" in captured["body"]:
+        opts = captured["body"]["options"]
+        assert opts["num_ctx"] == llm.context_settings()["num_ctx"] and opts["num_predict"] > 0
+    else:
+        assert captured["body"]["max_tokens"] == llm.context_settings()["num_predict"]
     assert out.prompt_tokens == 12 and out.truncated is False
 
 

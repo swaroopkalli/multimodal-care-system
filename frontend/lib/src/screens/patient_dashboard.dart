@@ -8,6 +8,7 @@ import '../widgets/metric_tile.dart';
 import '../widgets/mini_bar_chart.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_chip.dart';
+import '../widgets/formatted_text.dart';
 import '../api/api_client.dart';
 
 class PatientDashboard extends StatefulWidget {
@@ -482,10 +483,12 @@ class _ChatBubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0x22FFFFFF)),
         ),
-        child: Text(
+        child: FormattedText(
           text,
           style: TextStyle(
             color: mine ? Theme.of(context).colorScheme.primary : Colors.white,
+            fontSize: 14,
+            height: 1.4,
           ),
         ),
       ),

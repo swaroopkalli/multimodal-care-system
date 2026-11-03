@@ -27,7 +27,7 @@ class ApiClient {
   ApiClient._internal() {
     final configured = dotenv.isInitialized ? dotenv.env['BACKEND_URL'] : null;
     _baseUrl = (configured == null || configured.isEmpty)
-        ? 'http://127.0.0.1:5000'
+        ? 'http://127.0.0.1:5001'
         : configured;
     if (_baseUrl.endsWith('/')) {
       _baseUrl = _baseUrl.substring(0, _baseUrl.length - 1);
