@@ -101,6 +101,10 @@ def check_output(text: str, role: str = "patient", source_text: str = "", extra_
     norm = normalize(text or "")
     if not norm:
         return [Violation("empty", "")]
+    # These are prompt-internal delimiters used to mark untrusted context. They
+    # must never be exposed to the user, even if the rest of the draft is safe.
+    if re.search(r"</?untrusted_patient_data\s*>", norm, re.I):
+        violations.append(Violation("context_wrapper_leak", norm))
     source = normalize(source_text or "").lower()
     source_doses = {_norm_dose(m.group(0)) for m in _DOSE.finditer(source)}
     source_drugs = named_drugs_in(source, extra_drugs)

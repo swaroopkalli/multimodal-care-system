@@ -8,7 +8,7 @@ import threading
 
 log = logging.getLogger(__name__)
 
-EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "768"))   # nomic-embed-text
+EMBED_DIMENSIONS = int(os.getenv("NVIDIA_EMBED_DIMENSIONS") or os.getenv("EMBED_DIMENSIONS", "768"))
 
 # entity type -> graph label, relationship from Patient, vector index name (None = not embedded)
 ENTITIES = {

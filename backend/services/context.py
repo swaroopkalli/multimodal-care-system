@@ -28,10 +28,18 @@ def calculate_ewma(data_series, alpha=0.2):
 class ContextBundle:
     sections: list           # [{"name", "text", "priority"}] priority 0 = most important
     source_hash: str
+    wearable_version: str | None = None
 
-    def text(self, max_priority: int | None = None) -> str:
+    def text(self, max_priority: int | None = None, exclude_names: set[str] | None = None) -> str:
         parts = [s["text"] for s in sorted(self.sections, key=lambda s: s["priority"])
-                 if max_priority is None or s["priority"] <= max_priority]
+                 if (max_priority is None or s["priority"] <= max_priority)
+                 and s["name"] not in (exclude_names or set())]
+        return "\n\n".join(parts)
+
+    def wearable_text(self) -> str:
+        wearable_names = {"wearables", "anomalies", "live"}
+        parts = [s["text"] for s in sorted(self.sections, key=lambda s: s["priority"])
+                 if s["name"] in wearable_names]
         return "\n\n".join(parts)
 
 
@@ -83,13 +91,20 @@ def _build_static_sections(cur, patient_id: int, staff: bool) -> list:
                 "ORDER BY day ASC", (patient_id,))
     days = cur.fetchall()
     if days:
-        lines = ["Wearable daily summaries (UTC days, oldest to newest; EWMA = exponentially smoothed):"]
+        lines = ["Validated wearable daily aggregates (UTC; derived from ingested events, not raw readings)."]
         for d in days:
             tag = " [SIMULATED]" if d["is_simulated"] else ""
-            lines.append(f"- {d['day']}{tag}: sleep {_hm(d['sleep_minutes'])}, mean heart rate {_fmt(d['hr_mean'], 0, ' bpm')} "
-                         f"(range {d['hr_min']}-{d['hr_max']}), activity count {d['steps_total']}, samples {d['sample_count']}")
+            lines.append(f"- {d['day']}{tag} | Sleep: {_hm(d['sleep_minutes'])}; "
+                         f"heart rate: mean {_fmt(d['hr_mean'], 0, ' bpm')} "
+                         f"(range {_fmt(d['hr_min'])}-{_fmt(d['hr_max'])} bpm); "
+                         f"activity: {_fmt(d['steps_total'])} steps; "
+                         f"screen time: {_fmt(d['screentime_minutes'])} min; "
+                         f"sample count: {d['sample_count']}.")
         last = days[-1]
-        lines.append(f"- Smoothed trend: sleep EWMA {_hm(last['sleep_ewma'])}; heart-rate EWMA {_fmt(last['hr_mean_ewma'], 0, ' bpm')}")
+        lines.append(f"Latest smoothed daily trends (EWMA): sleep {_hm(last['sleep_ewma'])}; "
+                     f"heart rate {_fmt(last['hr_mean_ewma'], 0, ' bpm')}; "
+                     f"activity {_fmt(last['steps_ewma'])} steps; "
+                     f"screen time {_fmt(last['screentime_ewma'])} min.")
         score = _stress_heuristic(last["sleep_ewma"], last["hr_mean_ewma"])
         if score is not None:
             lines.append(f"- Monitoring heuristic (not a clinical score): {score:.1f}/10 based on shorter sleep and higher heart rate")
@@ -136,15 +151,35 @@ def _build_static_sections(cur, patient_id: int, staff: bool) -> list:
 
 def _live_section(patient_id: int):
     try:
-        v = live_vitals.get_latest(patient_id)
+        readings = live_vitals.get_recent(patient_id, 20)
     except Exception:
         return None
-    if not v:
+    # Summarize the ingested stream; never put individual raw samples in the prompt.
+    valid = [v for v in readings if v.get("heartrate") is not None and "outlier" not in v.get("quality_flags", [])]
+    if len(valid) < 3:
         return None
-    tag = " [SIMULATED]" if v["is_simulated"] else ""
+    values = [v["heartrate"] for v in valid]
+    latest = valid[0]
+    simulated = [v["is_simulated"] for v in valid]
+    tag = " [SIMULATED]" if all(simulated) else " [MIXED REAL/SIMULATED]" if any(simulated) else ""
+    smoothed = latest.get("heartrate_ewma")
     return {"name": "live", "priority": 1, "text": (
-        f"Latest wearable reading{tag} at {v['measured_at']}: heart rate {_fmt(v['heartrate'])} bpm "
-        f"(smoothed {_fmt(v['heartrate_ewma'], 0)} bpm)")}
+        f"Recent wearable heart-rate aggregate{tag} (last {len(valid)} valid ingested samples, "
+        f"through {latest.get('measured_at') or 'unknown time'}): mean {_fmt(sum(values) / len(values), 1, ' bpm')}, "
+        f"range {_fmt(min(values))}-{_fmt(max(values))} bpm, latest EWMA {_fmt(smoothed, 1, ' bpm')}. "
+        "This short-window snapshot is descriptive and is not a clinical assessment.")}
+
+
+def _wearable_version(cur, patient_id: int) -> str | None:
+    cur.execute(
+        "SELECT (SELECT coalesce(max(updated_at)::text, '') FROM wearable_daily WHERE patient_id=%(p)s) daily, "
+        "(SELECT coalesce(max(detected_at)::text, '') FROM wearable_anomalies WHERE patient_id=%(p)s) anomaly, "
+        "(SELECT coalesce(max(timestamp)::text, '') FROM wearable_data WHERE patient_id=%(p)s) latest",
+        {"p": patient_id})
+    values = cur.fetchone()
+    if not values or not any(values.values()):
+        return None
+    return hashlib.sha256(repr(sorted(values.items())).encode()).hexdigest()
 
 
 def build_context(patient_id: int, role: str = "staff") -> ContextBundle:
@@ -154,6 +189,7 @@ def build_context(patient_id: int, role: str = "staff") -> ContextBundle:
     try:
         cur = conn.cursor()
         digest = _source_hash(cur, patient_id)
+        wearable_version = _wearable_version(cur, patient_id)
         key = (patient_id, staff, digest)
         sections = _cache.get(key)
         if sections is None:
@@ -165,7 +201,7 @@ def build_context(patient_id: int, role: str = "staff") -> ContextBundle:
     live = _live_section(patient_id)
     if live:
         sections.append(live)
-    return ContextBundle(sections, digest)
+    return ContextBundle(sections, digest, wearable_version)
 
 
 def generate_patient_context(patient_id: int) -> str:

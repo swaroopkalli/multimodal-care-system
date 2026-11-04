@@ -144,4 +144,5 @@ CORRECTION_TEXT = {
     "definitive_diagnosis": "it stated a diagnosis as fact",
     "clinician_replacement": "it presented itself as, or as a replacement for, a clinician",
     "unsupported_claim": "it stated measurements that are not in the provided context",
+    "context_wrapper_leak": "it exposed internal context boundary markup",
 }

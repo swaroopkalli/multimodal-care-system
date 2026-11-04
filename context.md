@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 
-MindBridge is a multi-actor mental health monitoring and support system designed to help patients, caregivers, and clinicians monitor wellness patterns, interpret wearable-based signals, and receive AI-assisted guidance without replacing professional care. The project combines a Flutter frontend with a Python Flask backend, relational patient data, and locally hosted Ollama conversational assistance.
+MindBridge is a multi-actor mental health monitoring and support system designed to help patients, caregivers, and clinicians monitor wellness patterns, interpret wearable-based signals, and receive AI-assisted guidance without replacing professional care. The project combines a Flutter frontend, Flask backend, relational patient data, Neo4j retrieval, and NVIDIA NIM inference.
 
 The product is positioned as a decision and triage assistant rather than a standalone LLM app. It blends:
 
@@ -18,7 +18,7 @@ The product is positioned as a decision and triage assistant rather than a stand
 - Tracks wellness signals and daily context
 - Receives supportive conversational guidance
 - Chats with a patient-facing wellness coach
-- Uses a conversational memory flow rather than a full RAG context
+- Uses recent conversational history plus patient-scoped RAG context
 
 ### Caretaker
 - Validates patient status and observed behaviors
@@ -84,10 +84,10 @@ Primary tables:
 - `werkzeug` for password hashing and auth helpers
 
 ### AI / LLM stack
-- Local Ollama HTTP API (`/api/chat`)
-- Model tag configured via `OLLAMA_MODEL`
-- Endpoint configured via `OLLAMA_BASE_URL` (default `http://localhost:11434`)
-- No external LLM API key is required for inference
+- NVIDIA NIM chat completions configured by `NVIDIA_API_KEY` and `NVIDIA_MODEL`
+- NVIDIA NIM embeddings configured by `NVIDIA_EMBED_MODEL` and `NVIDIA_EMBED_DIMENSIONS`
+- Neo4j patient-scoped vector retrieval hydrated from PostgreSQL
+- Live model-generated chat requires successful RAG retrieval
 - Prompting style includes:
   - clinical analysis instructions for staff
   - empathetic wellness coaching for patient responses
@@ -121,21 +121,17 @@ Primary tables:
 ## 6. RAG and Context Generation
 
 ### Current implemented approach
-The project does not yet use a traditional vector-database RAG pipeline such as FAISS or Pinecone in the backend code. Instead, it implements a practical structured-context RAG layer built from relational database records.
+The backend uses Neo4j vector indexes for patient-scoped retrieval and hydrates retrieved clinical text from PostgreSQL. Current structured state, retrieved evidence, patient history, and policy are assembled by `backend/services/context_manager.py`.
 
 The flow is:
 
-1. The backend fetches patient data from PostgreSQL:
-   - patient name
-   - latest wearable data over a 14-day window
-   - prescribed medications
-   - recent doctor notes
-2. It transforms the data into a natural-language summary string.
-3. The summary is stored in `patient_contexts`.
-4. The staff chatbot then sends that summary plus the user query to the configured Ollama model.
-5. The LLM generates a clinical summary or analysis grounded in the patient context.
+1. The backend validates the user and their patient access.
+2. It builds current patient state from PostgreSQL and computes a query embedding with NVIDIA NIM.
+3. Neo4j retrieves patient-scoped candidate evidence; PostgreSQL rehydrates the source text.
+4. The context manager assembles policy, current state, retrieved evidence, and applicable history within the model budget.
+5. NVIDIA NIM generates a response; the independent output guard checks it before returning it.
 
-This is effectively a retrieval-and-grounding workflow, even though it is not a vector-index retrieval system.
+If Neo4j retrieval or NVIDIA embedding inference is unavailable, live chat returns HTTP 503 rather than generating without RAG.
 
 ### Patient context builder
 File: `backend/services/context.py`
@@ -160,7 +156,7 @@ The system sends:
 This means the response is grounded in patient-specific context rather than relying on a generic LLM answer alone.
 
 ### Important distinction
-The frontend README and architecture screen mention:
+The frontend README mentions:
 - FAISS retrieval
 - Supabase storage
 - Groq/OpenAI orchestration
@@ -168,8 +164,8 @@ The frontend README and architecture screen mention:
 Those are described as planned architecture or product framing, but the code currently implemented in this workspace uses:
 - PostgreSQL storage
 - Flask API retrieval
-- Ollama API generation
-- contextual summarization instead of a vector store
+- Neo4j vector retrieval hydrated from PostgreSQL
+- NVIDIA NIM chat and embedding APIs
 
 ## 7. Wearable and Stress Signal Logic
 
@@ -280,12 +276,11 @@ At present, the codebase is best described as a grounded clinical assistant prot
 - doctor note ingestion
 - wearable trend ingestion
 - patient-context summarization
-- Ollama-powered chat responses
+- NVIDIA NIM chat responses and embeddings
 - stateful patient conversation history
 - Flutter UI for demo flows
 
 ### What is still conceptual or planned
-- full FAISS vector search pipeline
 - explicit retrieval-ranking evaluation
 - production-grade clinical safety validation
 - real wearable integration
@@ -299,7 +294,7 @@ MindBridge is a prototype for a mental-health monitoring and support platform th
 - relational patient tracking
 - wearable and behavioral signals
 - RAG-style contextual grounding from patient records
-- role-specific AI assistance via Ollama
+- role-specific AI assistance via NVIDIA NIM with patient-scoped RAG
 - safety-focused prompts and risk heuristics
 
-The most important system design pattern in the current code is: structured context generation + grounded response synthesis. This is a useful and practical hybrid pattern for early-stage clinical AI tooling, even without a full vector database and formal metrics pipeline.
+The main design pattern is patient-scoped retrieval plus structured context assembly and guarded response generation. Clinical effectiveness still requires representative evaluation and human review.

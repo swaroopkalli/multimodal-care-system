@@ -1,4 +1,4 @@
-"""LLM client supporting NVIDIA NIM Cloud API and local Ollama inference."""
+"""NVIDIA NIM client for live chat and retrieval embeddings."""
 
 from __future__ import annotations
 
@@ -55,16 +55,16 @@ def is_nvidia_configured() -> bool:
 
 def context_settings() -> dict:
     """Context window numbers shared by the client and the budgeter."""
-    num_ctx = int(os.getenv("NVIDIA_NUM_CTX") or os.getenv("LLM_NUM_CTX") or os.getenv("OLLAMA_NUM_CTX") or "8192")
-    ratio = float(os.getenv("NVIDIA_PROMPT_BUDGET_RATIO") or os.getenv("LLM_PROMPT_BUDGET_RATIO") or os.getenv("OLLAMA_PROMPT_BUDGET_RATIO") or "0.8")
+    num_ctx = int(os.getenv("NVIDIA_NUM_CTX") or os.getenv("LLM_NUM_CTX") or "8192")
+    ratio = float(os.getenv("NVIDIA_PROMPT_BUDGET_RATIO") or os.getenv("LLM_PROMPT_BUDGET_RATIO") or "0.8")
     if num_ctx < 512 or not 0.1 <= ratio <= 0.95:
         raise LLMError("NUM_CTX must be >= 512 and PROMPT_BUDGET_RATIO within 0.1-0.95")
     prompt_budget = int(num_ctx * ratio)
     reserve = num_ctx - prompt_budget
     if os.getenv("NVIDIA_MAX_TOKENS", "").strip():
         configured = os.getenv("NVIDIA_MAX_TOKENS", "").strip()
-    elif "OLLAMA_NUM_PREDICT" in os.environ:
-        configured = os.environ["OLLAMA_NUM_PREDICT"].strip()
+    elif "LLM_MAX_TOKENS" in os.environ:
+        configured = os.environ["LLM_MAX_TOKENS"].strip()
     else:
         configured = ""
     num_predict = min(reserve, int(configured)) if configured else reserve
@@ -79,8 +79,8 @@ def context_settings() -> dict:
 
 def _timeouts() -> tuple[float, int]:
     try:
-        timeout = float(os.getenv("NVIDIA_TIMEOUT_SECONDS") or os.getenv("LLM_TIMEOUT_SECONDS") or os.getenv("OLLAMA_TIMEOUT_SECONDS") or "60")
-        retries = max(0, int(os.getenv("NVIDIA_RETRIES") or os.getenv("LLM_RETRIES") or os.getenv("OLLAMA_RETRIES") or "2"))
+        timeout = float(os.getenv("NVIDIA_TIMEOUT_SECONDS") or os.getenv("LLM_TIMEOUT_SECONDS") or "60")
+        retries = max(0, int(os.getenv("NVIDIA_RETRIES") or os.getenv("LLM_RETRIES") or "2"))
     except ValueError as exc:
         raise LLMError("TIMEOUT_SECONDS and RETRIES must be numeric") from exc
     if timeout <= 0:
@@ -180,56 +180,9 @@ def _nvidia_nim_chat_ex(messages: list[dict[str, str]], temperature: float) -> L
     raise LLMError("NVIDIA API request failed after retries")
 
 
-def _ollama_post_json(path: str, body: dict, timeout: float, retries: int) -> dict:
-    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-    request = Request(f"{base_url}{path}", data=json.dumps(body).encode("utf-8"),
-                      headers={"Content-Type": "application/json"}, method="POST")
-    model = body.get("model")
-    for attempt in range(retries + 1):
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            try:
-                detail = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                detail = ""
-            if exc.code == 404:
-                raise LLMError(f"Ollama model '{model}' is unavailable; pull it first") from exc
-            if exc.code < 500 or attempt >= retries:
-                raise LLMError(f"Ollama request failed (HTTP {exc.code}): {detail[:300]}") from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            if attempt >= retries:
-                raise LLMError(f"Ollama is unavailable at {base_url}: {exc}") from exc
-        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, TypeError) as exc:
-            raise LLMError("Ollama returned an invalid response") from exc
-        time.sleep(min(1.0 * (2 ** attempt), 5.0))
-    raise LLMError("Ollama request failed")
-
-
-def _ollama_chat_ex_native(messages: list[dict[str, str]], temperature: float) -> LLMResult:
-    model = (os.getenv("OLLAMA_MODEL") or os.getenv("NVIDIA_MODEL") or "llama3.2:3b").strip()
-    if not model:
-        raise LLMError("OLLAMA_MODEL must be set to an installed Ollama model tag")
-    timeout, retries = _timeouts()
-    ctx = context_settings()
-    result = _ollama_post_json("/api/chat", {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        "options": {"temperature": temperature, "num_ctx": ctx["num_ctx"], "num_predict": ctx["num_predict"]},
-    }, timeout, retries)
-    content = result.get("message", {}).get("content") if isinstance(result, dict) else None
-    if not isinstance(content, str) or not content.strip():
-        raise LLMError("Ollama returned a malformed or empty chat response")
-    return LLMResult(content=content, prompt_tokens=result.get("prompt_eval_count"),
-                     completion_tokens=result.get("eval_count"), done_reason=result.get("done_reason"))
-
-
 def chat_ex(messages: list[dict[str, str]], temperature: float = 0.4) -> LLMResult:
-    if is_nvidia_configured():
-        return _nvidia_nim_chat_ex(messages, temperature)
-    return _ollama_chat_ex_native(messages, temperature)
+    """Generate with NVIDIA NIM; there is no local-model fallback."""
+    return _nvidia_nim_chat_ex(messages, temperature)
 
 
 def chat(messages: list[dict[str, str]], temperature: float = 0.4) -> str:
@@ -238,8 +191,6 @@ def chat(messages: list[dict[str, str]], temperature: float = 0.4) -> str:
 
 _chat_ex = chat_ex
 _chat = chat
-_ollama_chat_ex = chat_ex
-_ollama_chat = chat
 _nvidia_nim_chat = lambda msgs, temp: _nvidia_nim_chat_ex(msgs, temp).content
 
 
@@ -278,25 +229,53 @@ def generate_chat_response(system_prompt: str, chat_history: list, query: str) -
     return generate_chat_response_ex(system_prompt, chat_history, query).content
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts via configured model if available, or return empty list."""
-    model = (os.getenv("NVIDIA_EMBED_MODEL") or os.getenv("LLM_EMBED_MODEL") or os.getenv("OLLAMA_EMBED_MODEL", "")).strip()
-    base_url = (os.getenv("OLLAMA_BASE_URL") or "").strip().rstrip("/")
-    if not model or not base_url or not texts:
+def embed_texts(texts: list[str], input_type: str = "passage") -> list[list[float]]:
+    """Create NVIDIA NIM embeddings in passage or query mode for Neo4j RAG."""
+    api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+    if not api_key:
+        raise LLMError("NVIDIA_API_KEY environment variable is not set")
+    if input_type not in {"passage", "query"}:
+        raise LLMError("Embedding input_type must be 'passage' or 'query'")
+    if not texts:
         return []
+    model = os.getenv("NVIDIA_EMBED_MODEL", "nvidia/nemotron-3.5-embed-1b").strip()
+    if not model:
+        raise LLMError("NVIDIA_EMBED_MODEL must be configured")
+    base_url = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        base_url = base_url[: -len("/chat/completions")]
+    endpoint = base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
+    dimensions = int(os.getenv("NVIDIA_EMBED_DIMENSIONS") or os.getenv("EMBED_DIMENSIONS") or "768")
     timeout, retries = _timeouts()
-    request = Request(f"{base_url}/api/embed", data=json.dumps({"model": model, "input": texts, "truncate": False}).encode("utf-8"),
-                      headers={"Content-Type": "application/json"}, method="POST")
+    request = Request(endpoint, data=json.dumps({
+        "model": model, "input": texts, "input_type": input_type,
+        "encoding_format": "float", "truncate": "NONE", "dimensions": dimensions,
+    }).encode("utf-8"), headers={
+        "Content-Type": "application/json", "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+    }, method="POST")
     for attempt in range(retries + 1):
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with urlopen(request, timeout=timeout, context=_get_ssl_context()) as response:
                 result = json.loads(response.read().decode("utf-8"))
-            vectors = result.get("embeddings") if isinstance(result, dict) else None
-            if not isinstance(vectors, list) or len(vectors) != len(texts) or not all(vectors):
-                raise LLMError("Ollama returned malformed embeddings")
-            return vectors
-        except Exception as exc:
+            rows = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(rows, list) or len(rows) != len(texts):
+                raise LLMError("NVIDIA returned malformed embeddings")
+            rows.sort(key=lambda row: row.get("index", 0))
+            vectors = [row.get("embedding") for row in rows]
+            if any(not isinstance(vector, list) or len(vector) != dimensions for vector in vectors):
+                raise LLMError(f"NVIDIA embeddings must each contain {dimensions} dimensions")
+            return [[float(value) for value in vector] for vector in vectors]
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:300]
+            if exc.code == 401:
+                raise LLMError("NVIDIA embedding authentication failed (HTTP 401); verify NVIDIA_API_KEY") from exc
+            if exc.code < 500 or attempt >= retries:
+                raise LLMError(f"NVIDIA embedding request failed (HTTP {exc.code}): {detail}") from exc
+        except (URLError, TimeoutError, OSError) as exc:
             if attempt >= retries:
-                raise LLMError(f"Embedding failed: {exc}") from exc
-            time.sleep(1.0)
-    return []
+                raise LLMError(f"NVIDIA embedding endpoint is unreachable at {endpoint}: {exc}") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, TypeError, ValueError) as exc:
+            raise LLMError("NVIDIA returned an invalid embedding response") from exc
+        time.sleep(min(0.25 * (2 ** attempt), 1.0))
+    raise LLMError("NVIDIA embedding request failed after retries")

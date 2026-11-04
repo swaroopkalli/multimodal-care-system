@@ -43,7 +43,9 @@ def rollup_patient(conn, patient_id: int, since_day: date | None = None) -> list
                (array_agg(sleep_minutes ORDER BY timestamp DESC) FILTER (WHERE sleep_minutes IS NOT NULL))[1] AS sleep_minutes,
                (array_agg(screentime_minutes ORDER BY timestamp DESC) FILTER (WHERE screentime_minutes IS NOT NULL))[1] AS screentime_minutes,
                avg(heartrate) FILTER (WHERE NOT ('outlier' = ANY(quality_flags))) AS hr_mean,
-               min(heartrate) AS hr_min, max(heartrate) AS hr_max, bool_or(is_simulated) AS sim
+               min(heartrate) FILTER (WHERE NOT ('outlier' = ANY(quality_flags))) AS hr_min,
+               max(heartrate) FILTER (WHERE NOT ('outlier' = ANY(quality_flags))) AS hr_max,
+               bool_or(is_simulated) AS sim
         FROM wearable_data
         WHERE patient_id = %s AND (%s::date IS NULL OR timestamp::date >= %s::date)
         GROUP BY 1 ORDER BY 1

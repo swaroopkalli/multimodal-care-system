@@ -1,10 +1,10 @@
 """Context-window budgeting, long-input handling and a small LRU cache.
 
-Budget model (OLLAMA_NUM_CTX, OLLAMA_PROMPT_BUDGET_RATIO=0.8):
+Budget model (NVIDIA_NUM_CTX, NVIDIA_PROMPT_BUDGET_RATIO=0.8):
     prompt budget   = ratio * num_ctx      (system + guard text + facts + retrieval + history + message)
-    response reserve = num_ctx - prompt budget (also passed to Ollama as num_predict)
-No tokenizer for the local model is available in-process, so token counts are
-estimated conservatively and calibrated from the ``prompt_eval_count`` Ollama returns.
+response reserve = num_ctx - prompt budget (passed to NVIDIA as max_tokens)
+No tokenizer is available in-process, so token counts are
+estimated conservatively and calibrated from NVIDIA's reported prompt-token count.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def estimate_tokens(text: str) -> int:
 
 
 def record_usage(prompt_chars: int, prompt_tokens: int | None) -> None:
-    """Calibrate chars-per-token from an observed Ollama prompt_eval_count (kept on the cautious side)."""
+    """Calibrate chars-per-token from observed provider prompt-token usage (kept cautious)."""
     global _chars_per_token
     if not prompt_tokens or prompt_tokens < 50 or prompt_chars < 100:
         return

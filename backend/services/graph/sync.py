@@ -27,13 +27,16 @@ MAX_ATTEMPTS = 5
 
 
 def window_text(row: dict) -> str:
-    """Deterministic narrative of one daily rollup (also used when hydrating retrieved windows)."""
+    """Categorized narrative of one aggregated wearable day; never a raw event."""
     sleep = row["sleep_minutes"]
     sleep_txt = "unknown" if sleep is None else f"{sleep // 60}h {sleep % 60}m"
     tag = " (simulated data)" if row["is_simulated"] else ""
     hr = "n/a" if row["hr_mean"] is None else f"{row['hr_mean']:.0f} bpm"
-    return (f"Wearable summary for {row['day']}{tag}: sleep {sleep_txt}, mean heart rate {hr}, "
-            f"activity count {row['steps_total']}, screen time {row['screentime_minutes']} min.")
+    return (f"Categorized wearable daily aggregate for {row['day']}{tag}: "
+            f"sleep={sleep_txt}; heart_rate_mean={hr}; activity_steps={row['steps_total']}; "
+            f"screen_time={row['screentime_minutes']} min; samples={row['sample_count']}; "
+            f"sleep_EWMA={row.get('sleep_ewma')}; heart_rate_EWMA={row.get('hr_mean_ewma')}; "
+            f"activity_EWMA={row.get('steps_ewma')}; screen_time_EWMA={row.get('screentime_ewma')}.")
 
 
 def _text_hash(text: str) -> str:

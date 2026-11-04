@@ -1,4 +1,4 @@
-"""10. End-to-end patient workflow across API, PostgreSQL, Redis, Neo4j and Ollama (real model)."""
+"""10. End-to-end patient workflow across API, PostgreSQL, Redis, Neo4j and NVIDIA NIM."""
 
 import json
 import uuid
@@ -9,7 +9,7 @@ from .t02_ingestion import make_event, redis_client
 from .t04_history_anomaly import seed_history
 
 
-@check("10. End to end", needs=("postgres", "redis", "neo4j", "ollama"))
+@check("10. End to end", needs=("postgres", "redis", "neo4j", "nvidia"))
 def full_patient_workflow_register_ingest_retrieve_chat_guard_and_remember():
     from db import get_db_connection
     from services import wearable_analytics as wa

@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from flask import jsonify, request
 
@@ -9,6 +10,7 @@ from db import get_db_connection
 from endpoints.authz import current_user, resolve_patient_id, role_required
 from services import budget, llm, memory
 from services.context import build_context
+from services.context_manager import ContextBudgetError, EvidenceRef, assemble_context
 from services.graph import retrieval
 from services.graph.client import GraphUnavailable
 from services.graph.outbox import enqueue
@@ -31,8 +33,8 @@ Offer supportive conversation, stress-reduction and sleep-hygiene ideas, and hel
 {POLICY}
 Always encourage seeking professional help when appropriate."""
 
-# Share of the prompt budget each part may use (the system prompt takes the remainder).
-SHARE_QUERY, SHARE_FACTS, SHARE_HISTORY, SHARE_RETRIEVAL = 0.25, 0.28, 0.15, 0.20
+# Long-message condensation target; context_manager owns the final prompt budget.
+SHARE_QUERY = 0.25
 
 
 def log_chat(role, patient_id, query, response, handling="direct"):
@@ -82,17 +84,6 @@ def _summarize(chunk: str) -> str:
                      {"role": "user", "content": chunk}], 0.1)
 
 
-def _fit_sections(sections, token_budget):
-    """Whole sections by priority; priority-0 sections are always kept."""
-    chosen, used = [], 0
-    for s in sorted(sections, key=lambda s: s["priority"]):
-        cost = budget.estimate_tokens(s["text"])
-        if s["priority"] == 0 or used + cost <= token_budget:
-            chosen.append(s)
-            used += cost
-    return chosen
-
-
 def _run_chat(role, patient_id, query):
     pb = budget.prompt_budget()
     system = STAFF_SYSTEM_PROMPT if role == "staff" else PATIENT_SYSTEM_PROMPT
@@ -123,57 +114,79 @@ def _run_chat(role, patient_id, query):
                                      "Nothing was truncated; please try again shortly or send it in parts.",
                             "input_handling": "rejected"}), 503
 
-    # 3. pinned facts (whole sections), history, retrieval - each within its share of the budget
+    # 3. Build current state, conversational history, and patient-scoped evidence.
     bundle = build_context(patient_id, role)
-    facts = _fit_sections(bundle.sections, int(pb * SHARE_FACTS))
-    facts_text = "\n\n".join(s["text"] for s in facts)
+    state_text = bundle.text(exclude_names={"wearables", "anomalies", "live"})
+    wearable_text = bundle.wearable_text()
 
     history, history_ids = ([], set())
     if role == "patient":
-        history, history_ids = memory.load_history(patient_id, "patient", int(pb * SHARE_HISTORY))
+        history, history_ids = memory.load_history(patient_id, "patient", pb)
 
-    retrieval_meta, retrieved_text, retrieved = {"status": "skipped", "used": 0}, "", []
+    retrieval_meta, retrieved = {"status": "skipped", "used": 0}, []
     try:
         kinds = retrieval.KINDS_STAFF if role == "staff" else retrieval.KINDS_PATIENT
         items = retrieval.retrieve(patient_id, message, kinds=kinds, k=4)
         recent_cut = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
         items = [i for i in items if not (i["kind"] == "window" and (i["created"] or "") >= recent_cut)
                  and not (i["kind"] == "turn" and i["id"] in history_ids)]
-        retrieved = retrieval.select_within_budget(items, int(pb * SHARE_RETRIEVAL))
-        retrieved_text = "\n".join(i["text"] for i in retrieved)
+        retrieved = items
         retrieval_meta = {"status": "ok", "used": len(retrieved)}
     except GraphUnavailable as exc:
         log.warning("retrieval unavailable: %s", exc)
-        retrieval_meta = {"status": "unavailable", "used": 0}
+        return jsonify({
+            "error": "Patient-scoped context retrieval is currently unavailable. Please try again shortly.",
+            "retrieval": {"status": "unavailable", "used": 0},
+        }), 503
 
-    context = facts_text + (f"\n\nRelevant earlier information:\n{retrieved_text}" if retrieved_text else "")
+    evidence = [{
+        "source_id": f"{item['kind']}:{item['id']}",
+        "source_type": item["kind"],
+        "version": str(item["id"]),
+        "score": item.get("score"),
+        "content": item["text"],
+    } for item in retrieved]
+    retrieved_at = datetime.now(timezone.utc).isoformat()
+    evidence_metadata = [EvidenceRef(
+        source_id=item["source_id"], source_type=item["source_type"],
+        version=item["version"], retrieved_at=retrieved_at,
+        score=item["score"], patient_specific=True,
+    ) for item in evidence]
+    try:
+        messages, manifest = assemble_context(
+            role=role, patient_ref=str(patient_id), query=message,
+            patient_state=state_text, history=[
+                {"role": "assistant" if item["role"] == "model" else item["role"],
+                 "content": item["parts"][0]}
+                for item in history if item.get("parts")
+            ], evidence=evidence, evidence_metadata=evidence_metadata,
+            state_version=bundle.source_hash, policy=system, request_id=str(uuid4()),
+            wearable_summary=wearable_text, wearable_summary_version=bundle.wearable_version,
+        )
+    except ContextBudgetError as exc:
+        return jsonify({"error": str(exc), "input_handling": handling,
+                        "context": {"status": "over_budget"}}), 413
+    except ValueError as exc:
+        log.exception("invalid context manager configuration")
+        return jsonify({"error": f"Invalid context configuration: {exc}"}), 500
+    retrieval_meta["used"] = manifest.retrieval_metadata.get("selected_count", 0)
 
-    # 4. final guard against overflow: shed retrieval, then history, then low-priority facts
-    def estimate():
-        return (budget.estimate_tokens(system) + budget.estimate_tokens(context) + budget.estimate_tokens(message)
-                + sum(budget.estimate_tokens(h["parts"][0]) for h in history) + 300)
-    while estimate() > pb and retrieved:
-        retrieved.pop()
-        retrieved_text = "\n".join(i["text"] for i in retrieved)
-        context = facts_text + (f"\n\nRelevant earlier information:\n{retrieved_text}" if retrieved_text else "")
-    while estimate() > pb and len(history) >= 2:
-        history = history[2:]
-    while estimate() > pb and len([s for s in facts if s["priority"] > 0]) > 0:
-        facts.remove(max((s for s in facts if s["priority"] > 0), key=lambda s: s["priority"]))
-        facts_text = "\n\n".join(s["text"] for s in facts)
-        context = facts_text + (f"\n\nRelevant earlier information:\n{retrieved_text}" if retrieved_text else "")
-
-    source_text = "\n".join([context, query] + [h["parts"][0] for h in history])
+    assembled_system = messages[0]["content"]
+    assembled_history = [{"role": "model" if item["role"] == "assistant" else item["role"],
+                          "parts": [item["content"]]} for item in messages[1:-1]]
+    assembled_query = messages[-1]["content"]
+    source_text = "\n".join([m["content"] for m in messages] + [query])
     usage = {}
 
     def generate(correction):
-        sys_prompt = system if not correction else f"{system}\n\n{correction}"
+        sys_prompt = assembled_system if not correction else f"{assembled_system}\n\n{correction}"
         if role == "staff":
-            result = llm.generate_response_ex(sys_prompt, context, message)
+            result = llm.generate_response_ex(sys_prompt, "", assembled_query)
         else:
-            result = llm.generate_chat_response_ex(sys_prompt, history, message, context=context)
+            result = llm.generate_chat_response_ex(sys_prompt, assembled_history, assembled_query)
         usage["prompt_tokens"], usage["done_reason"] = result.prompt_tokens, result.done_reason
-        budget.record_usage(len(sys_prompt) + len(context) + len(message), result.prompt_tokens)
+        budget.record_usage(sum(len(m["content"]) for m in messages) + (len(correction) if correction else 0),
+                            result.prompt_tokens)
         return result.content
 
     try:
@@ -196,6 +209,7 @@ def _run_chat(role, patient_id, query):
         "guardrail": {"action": reply.action, "retries": reply.attempts, "stage": "output"},
         "input_handling": handling,
         "retrieval": retrieval_meta,
+        "context": {"manifest": manifest.to_dict()},
         "usage": {"prompt_tokens": usage.get("prompt_tokens"), "prompt_budget": pb,
                   "truncated": usage.get("done_reason") == "length"},
     }), 200

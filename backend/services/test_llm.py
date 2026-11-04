@@ -118,7 +118,7 @@ class LLMTests(unittest.TestCase):
                 _nvidia_nim_chat_ex([], 0.4)
 
     def test_missing_model_configuration(self):
-        with patch.dict(os.environ, {"NVIDIA_MODEL": "", "OLLAMA_MODEL": ""}):
+        with patch.dict(os.environ, {"NVIDIA_MODEL": ""}):
             with self.assertRaisesRegex(LLMError, "NVIDIA_MODEL"):
                 _nvidia_nim_chat_ex([], 0.4)
 

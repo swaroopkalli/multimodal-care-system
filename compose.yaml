@@ -1,9 +1,6 @@
-# MindBridge local infrastructure.
-#   docker compose up -d redis neo4j      # required services
-# Ollama normally runs on the host (ports 127.0.0.1:11434). To run it in a
-# container instead, stop the host Ollama and use:
-#   docker compose --profile ollama-container up -d ollama
-# Credentials come from the git-ignored root .env (see .env.example).
+# MindBridge local infrastructure. Chat and embedding inference use NVIDIA NIM.
+#   docker compose up -d redis neo4j
+# Credentials come from the git-ignored root .env.
 
 services:
   redis:
@@ -52,23 +49,7 @@ services:
       retries: 12
       start_period: 30s
 
-  ollama:
-    profiles: ["ollama-container"]
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:11434:11434"
-    volumes:
-      - ollama_models:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 15s
-
 volumes:
   redis_data:
   neo4j_data:
   neo4j_logs:
-  ollama_models:

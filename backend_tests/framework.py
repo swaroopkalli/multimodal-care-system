@@ -80,21 +80,17 @@ def _probe_once(service: str) -> tuple[bool, str]:
             from services.graph import client
             if not client.ping():
                 raise RuntimeError("bolt connection failed")
-        elif service in ("ollama", "llm", "nvidia"):
+        elif service in ("llm", "nvidia"):
             from services.llm import is_nvidia_configured
-            if is_nvidia_configured():
-                from services.llm import chat
-                res = chat([{"role": "user", "content": "ping"}])
-                if not res:
-                    raise RuntimeError("NVIDIA model returned empty response")
-            else:
-                import json, urllib.request
-                base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-                with urllib.request.urlopen(f"{base}/api/tags", timeout=4) as r:
-                    names = [m["name"] for m in json.load(r).get("models", [])]
-                for need in (os.getenv("OLLAMA_MODEL", ""), os.getenv("OLLAMA_EMBED_MODEL", "")):
-                    if need and need not in names and f"{need}:latest" not in names:
-                        raise RuntimeError(f"model '{need}' not installed (ollama pull {need})")
+            if not is_nvidia_configured():
+                raise RuntimeError("NVIDIA_API_KEY is not configured")
+            from services.llm import chat, embed_texts
+            if not chat([{"role": "user", "content": "ping"}]):
+                raise RuntimeError("NVIDIA chat model returned empty response")
+            vectors = embed_texts(["connectivity probe"], input_type="query")
+            from services.graph.client import EMBED_DIMENSIONS
+            if not vectors or len(vectors[0]) != EMBED_DIMENSIONS:
+                raise RuntimeError("NVIDIA embedding model returned an invalid vector")
         return (True, "")
     except Exception as exc:
         return (False, f"{type(exc).__name__}: {str(exc).splitlines()[0][:120] if str(exc) else ''}")

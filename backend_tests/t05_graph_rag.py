@@ -11,7 +11,7 @@ def _add_note(client, token, patient_id, text):
     return r.get_json()["note_id"]
 
 
-@check("5. Embeddings / vector retrieval", needs=("ollama",))
+@check("5. Embeddings / vector retrieval", needs=("nvidia",))
 def embeddings_have_the_expected_size_and_capture_meaning():
     import math
     from services.graph.embeddings import embed_document, embed_query
@@ -19,10 +19,11 @@ def embeddings_have_the_expected_size_and_capture_meaning():
     b = embed_document("Patient reports severe insomnia and wakes repeatedly during the night.")
     c = embed_document("The football match ended with a two-one score.")
     cos = lambda x, y: sum(p * q for p, q in zip(x, y)) / (math.sqrt(sum(p * p for p in x)) * math.sqrt(sum(q * q for q in y)))
-    assert len(a) == 768 and cos(a, b) > cos(a, c) + 0.1, (cos(a, b), cos(a, c))
+    from services.graph.client import EMBED_DIMENSIONS
+    assert len(a) == EMBED_DIMENSIONS and cos(a, b) > cos(a, c) + 0.1, (cos(a, b), cos(a, c))
 
 
-@check("5. Embeddings / vector retrieval", needs=("postgres", "neo4j", "ollama"))
+@check("5. Embeddings / vector retrieval", needs=("postgres", "neo4j", "nvidia"))
 def notes_sync_to_neo4j_and_are_found_by_meaning_via_the_vector_index():
     from services.graph import client as gclient, retrieval, sync
     with world() as (w, client):
@@ -46,7 +47,7 @@ def notes_sync_to_neo4j_and_are_found_by_meaning_via_the_vector_index():
         assert rec["in_sync"], rec
 
 
-@check("6. Patient-specific RAG", needs=("postgres", "neo4j", "ollama"))
+@check("6. Patient-specific RAG", needs=("postgres", "neo4j", "nvidia"))
 def retrieval_never_returns_another_patients_information():
     from services.graph import retrieval, sync
     secret_b = "Zebra-Quartz confidential detail about patient B only"
@@ -68,7 +69,7 @@ def retrieval_never_returns_another_patients_information():
         assert retrieval._hydrate(w.patient_b, a_items) == [], "hydrating A's ids under B's id must return nothing"
 
 
-@check("6. Patient-specific RAG", needs=("postgres", "neo4j", "ollama"))
+@check("6. Patient-specific RAG", needs=("postgres", "neo4j", "nvidia"))
 def patients_do_not_see_clinician_notes_but_staff_do():
     from services.graph import retrieval, sync
     with world() as (w, client):
@@ -83,7 +84,7 @@ def patients_do_not_see_clinician_notes_but_staff_do():
         assert any(i["kind"] == "note" for i in staff_items)
 
 
-@check("6. Patient-specific RAG", needs=("postgres", "neo4j", "ollama"))
+@check("6. Patient-specific RAG", needs=("postgres", "neo4j", "nvidia"))
 def deleted_source_rows_disappear_from_the_graph():
     from db import get_db_connection
     from services.graph import client as gclient, sync

@@ -10,7 +10,8 @@ class ArchitectureScreen extends StatelessWidget {
     ('Data Layer', 'PostgreSQL (records), Redis (live wearable values), Neo4j (graph + vectors)'),
     ('Wearable Processing', 'Validation, time-aware EWMA smoothing, daily rollups, anomaly detection'),
     ('Guardrails', 'Independent input and output checks: no prescribing, dosing or diagnoses'),
-    ('RAG System', 'Patient-scoped Neo4j vector retrieval feeding a local Ollama model'),
+    ('RAG System', 'Patient-scoped Neo4j vector retrieval using NVIDIA NIM embeddings'),
+    ('Language Model', 'NVIDIA NIM chat completions with the configured API key'),
     ('Response', 'Diagnostic-support summaries only; clinicians make decisions'),
   ];
 
@@ -29,7 +30,7 @@ class ArchitectureScreen extends StatelessWidget {
         SectionCard(
           title: 'System Positioning',
           child: Text(
-            'A multi-actor mental-health monitoring and diagnostic-support system. Smoothed wearable signals and patient-reported data are retrieved per patient to ground a local language model, with independent safety checks around every exchange.',
+            'A multi-actor mental-health monitoring and diagnostic-support system. Smoothed wearable signals and patient-reported data are retrieved per patient to ground NVIDIA NIM chat responses, with independent safety checks around every exchange.',
             style: Theme.of(context).textTheme.bodyLarge,
           ),
         ),
@@ -58,7 +59,7 @@ class ArchitectureScreen extends StatelessWidget {
         const SectionCard(
           title: 'Backend Contract',
           child: Text(
-            'Flutter calls authenticated Flask APIs. PostgreSQL is the system of record, Redis serves live vitals, Neo4j serves patient-scoped vector retrieval, and Ollama runs the model locally.',
+            'Flutter calls authenticated Flask APIs. PostgreSQL is the system of record, Redis serves live vitals, Neo4j serves patient-scoped vector retrieval, and NVIDIA NIM provides chat and embedding inference.',
           ),
         ),
       ],

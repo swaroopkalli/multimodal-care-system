@@ -1,4 +1,4 @@
-"""Embeddings via Ollama (nomic-embed-text style prefixes), with chunk-and-average for long texts."""
+"""NVIDIA NIM embeddings with chunk-and-average for long clinical texts."""
 
 from __future__ import annotations
 
@@ -15,13 +15,15 @@ CHUNK_TOKENS = 400          # well inside the embedding model's window; nothing 
 
 
 def model_name() -> str:
-    return os.getenv("NVIDIA_EMBED_MODEL") or os.getenv("LLM_EMBED_MODEL") or os.getenv("OLLAMA_EMBED_MODEL", "")
+    model = os.getenv("NVIDIA_EMBED_MODEL", "nvidia/nemotron-3.5-embed-1b")
+    dimensions = os.getenv("NVIDIA_EMBED_DIMENSIONS") or os.getenv("EMBED_DIMENSIONS", "768")
+    return f"{model}:{dimensions}d"
 
 
-def _embed(prefix: str, text: str) -> list[float]:
+def _embed(text: str, input_type: str) -> list[float]:
     chunks = split_into_chunks(text.strip(), CHUNK_TOKENS) or [text]
     try:
-        vectors = embed_texts([f"{prefix}{c}" for c in chunks])
+        vectors = embed_texts(chunks, input_type=input_type)
     except LLMError as exc:
         raise GraphUnavailable(f"embedding failed: {exc}") from exc
     if not vectors:
@@ -34,13 +36,13 @@ def _embed(prefix: str, text: str) -> list[float]:
 
 
 def embed_document(text: str) -> list[float]:
-    return _embed("search_document: ", text)
+    return _embed(text, "passage")
 
 
 def embed_query(text: str, patient_id: int | None = None) -> list[float]:
     key = (patient_id, hashlib.sha256(text.encode()).hexdigest())
     hit = _cache.get(key)
     if hit is None:
-        hit = _embed("search_query: ", text)
+        hit = _embed(text, "query")
         _cache.put(key, hit)
     return hit

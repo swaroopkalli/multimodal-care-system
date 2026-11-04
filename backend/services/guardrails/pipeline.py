@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -27,7 +28,8 @@ def correction_instruction(categories: list[str]) -> str:
         "Rewrite it so that it only summarises what the patient reported and what the data shows, describes "
         "patterns with appropriate uncertainty, and never tells anyone to start, stop, change or dose a "
         "medication, never names a medication or dose the patient did not mention, never states a diagnosis "
-        "as fact, and suggests speaking with their doctor or pharmacist where relevant."
+        "as fact, never exposes internal prompt markup or context boundary tags, and suggests speaking with "
+        "their doctor or pharmacist where relevant."
     )
 
 
@@ -44,12 +46,16 @@ def run_guarded(role: str, generate: Callable[[str | None], str], source_text: s
     for attempt in range(limit + 1):
         draft = generate(correction)
         try:
-            violations = check_output(draft, role, source_text, extra_drugs)
+            # Context boundaries are prompt markup, not user-facing content.
+            # Strip only these known delimiters, then apply the full safety
+            # checks to the text they enclosed.
+            clean_draft = re.sub(r"<\s*/?\s*untrusted_patient_data\s*>", "", draft, flags=re.I).strip()
+            violations = check_output(clean_draft, role, source_text, extra_drugs)
         except Exception:
             log.exception("output guard failed; failing closed")
             return GuardedReply(FALLBACK_STAFF if role == "staff" else FALLBACK_PATIENT, "fallback", attempt, ["guard_error"])
         if not violations:
-            return GuardedReply(draft, "allowed", attempt)
+            return GuardedReply(clean_draft, "allowed", attempt)
         categories = [v.category for v in violations]
         correction = correction_instruction(categories)
     return GuardedReply(FALLBACK_STAFF if role == "staff" else FALLBACK_PATIENT, "fallback", limit, categories)

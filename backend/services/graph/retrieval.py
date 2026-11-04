@@ -15,7 +15,7 @@ from db import get_db_connection
 from services.budget import estimate_tokens
 from services.graph import client
 from services.graph.client import ENTITIES, GraphUnavailable
-from services.graph.embeddings import embed_query
+from services.graph.embeddings import embed_query, model_name
 from services.graph.sync import window_text
 
 OVERFETCH = 10
@@ -41,18 +41,21 @@ def _recency(kind: str, created_iso: str | None, now: datetime) -> float:
 def _search_kind(kind: str, patient_id: int, vector: list[float], k: int) -> list[dict]:
     spec = ENTITIES[kind]
     label, rel, index = spec["label"], spec["rel"], spec["index"]
+    embedding_model = model_name()
     rows = client.run(
         "CALL db.index.vector.queryNodes($index, $k, $vec) YIELD node, score "
-        "WHERE node.patient_id = $pid "
+        "WHERE node.patient_id = $pid AND node.embedding_model = $model "
         "RETURN node.pg_id AS id, node.created_at AS created, node.importance AS importance, score "
-        "ORDER BY score DESC LIMIT $limit", index=index, k=k * OVERFETCH, vec=vector, pid=patient_id, limit=k)
+        "ORDER BY score DESC LIMIT $limit", index=index, k=k * OVERFETCH, vec=vector, pid=patient_id,
+        model=embedding_model, limit=k)
     found = {r["id"]: r for r in rows}
     if len(found) < k:           # exact scan inside this patient's own subgraph
         exact = client.run(
-            f"MATCH (:Patient {{pg_id: $pid}})-[:{rel}]->(n:{label}) WHERE n.embedding IS NOT NULL "
+            f"MATCH (:Patient {{pg_id: $pid}})-[:{rel}]->(n:{label}) "
+            "WHERE n.embedding IS NOT NULL AND n.embedding_model = $model "
             "WITH n, vector.similarity.cosine(n.embedding, $vec) AS score ORDER BY score DESC LIMIT $limit "
             "RETURN n.pg_id AS id, n.created_at AS created, n.importance AS importance, score",
-            pid=patient_id, vec=vector, limit=k)
+            pid=patient_id, vec=vector, model=embedding_model, limit=k)
         for r in exact:
             found.setdefault(r["id"], r)
     return [{"kind": kind, "id": r["id"], "similarity": float(r["score"]), "created": r["created"],

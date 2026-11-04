@@ -9,13 +9,13 @@ from .framework import MARK, check, world
 def budget_is_80_percent_of_the_context_with_a_response_reserve():
     from services.llm import context_settings
     import os
-    with patch.dict(os.environ, {"OLLAMA_NUM_CTX": "8192", "OLLAMA_PROMPT_BUDGET_RATIO": "0.8", "OLLAMA_NUM_PREDICT": ""}):
+    with patch.dict(os.environ, {"NVIDIA_NUM_CTX": "8192", "NVIDIA_PROMPT_BUDGET_RATIO": "0.8", "NVIDIA_MAX_TOKENS": ""}):
         s = context_settings()
     assert s["prompt_budget"] == 6553 and s["response_reserve"] == 1639 and s["num_predict"] == 1639, s
 
 
 @check("8. Context window / long input")
-def requests_carry_num_ctx_and_num_predict_to_ollama():
+def nvidia_request_respects_the_configured_response_reserve():
     import json
     from services import llm
     captured = {}
@@ -24,23 +24,17 @@ def requests_carry_num_ctx_and_num_predict_to_ollama():
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def read(self):
-            if llm.is_nvidia_configured():
-                return json.dumps({
-                    "choices": [{"message": {"content": "ok"}}],
-                    "usage": {"prompt_tokens": 12, "completion_tokens": 1},
-                }).encode()
-            return json.dumps({"message": {"content": "ok"}, "prompt_eval_count": 12, "done_reason": "stop"}).encode()
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 1},
+            }).encode()
 
     def fake(req, timeout=None):
         captured["body"] = json.loads(req.data)
         return Resp()
     with patch("services.llm.urlopen", fake):
-        out = llm._ollama_chat_ex([{"role": "user", "content": "hi"}], 0.2)
-    if "options" in captured["body"]:
-        opts = captured["body"]["options"]
-        assert opts["num_ctx"] == llm.context_settings()["num_ctx"] and opts["num_predict"] > 0
-    else:
-        assert captured["body"]["max_tokens"] == llm.context_settings()["num_predict"]
+        out = llm.chat_ex([{"role": "user", "content": "hi"}], 0.2)
+    assert captured["body"]["max_tokens"] == llm.context_settings()["num_predict"]
     assert out.prompt_tokens == 12 and out.truncated is False
 
 

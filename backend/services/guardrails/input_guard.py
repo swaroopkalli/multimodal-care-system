@@ -71,6 +71,13 @@ _OFF_TOPIC = re.compile(
     r"flight|flights|hotel|visa|tax|taxes|homework|essay|hack|hacking|password|ssn)\b"
 )
 
+# Basic arithmetic and calculator prompts are common out-of-domain probes but
+# do not contain any of the topic words covered by _OFF_TOPIC.
+_MATH_QUESTION = re.compile(
+    r"\b(?:what\s+is|calculate|compute|solve)\s+-?\d+(?:\s*(?:\+|-|\*|/|×|÷)\s*-?\d+)+"
+    r"(?:\s*=\s*-?\d+)?\s*[?!.]?"
+)
+
 _CRISIS = re.compile(
     r"\b(?:kill(?:ing)?\s+myself|suicid\w*|end(?:ing)?\s+(?:my\s+life|it\s+all)|take\s+my\s+(?:own\s+)?life|"
     r"want(?:ed)?\s+to\s+die|wanna\s+die|better\s+off\s+dead|don'?t\s+want\s+to\s+(?:live|be\s+alive|exist)|"
@@ -115,6 +122,6 @@ def check_input(text: str, role: str = "patient", extra_drugs=()) -> InputDecisi
         return InputDecision("refuse", "medication_request", REFUSALS["medication_request"])
     if _TREATMENT.search(lowered):
         return InputDecision("refuse", "treatment_request", REFUSALS["treatment_request"])
-    if _OFF_TOPIC.search(lowered) and not HEALTH_TERMS.search(lowered):
+    if (_OFF_TOPIC.search(lowered) or _MATH_QUESTION.search(lowered)) and not HEALTH_TERMS.search(lowered):
         return InputDecision("refuse", "off_topic", REFUSALS["off_topic"])
     return InputDecision("allow")
