@@ -11,9 +11,15 @@ worker.py  --- validate/normalise (services/wearables.py)
       '-> every ROLLUP_INTERVAL_SECONDS: wearable_daily rollups + wearable_anomalies
 ```
 
+Run the seed once first. It creates/reuses one benchmark patient, writes its ID
+to the ignored `.benchmark_patient_id` file, and stores account credentials in
+the ignored `.benchmark_credentials` file. Re-running it reuses the same
+accounts and does not append duplicate fixture context.
+
 Run (repository root `.env` is loaded automatically; Redis/Neo4j come from `docker compose up -d redis neo4j`):
 
 ```bash
+./scripts/create_demo_patient.sh
 cd backend/wearable_ingestion
 python worker.py        # terminal 1: start the consumer first
 python simulator.py     # terminal 2: synthetic events
@@ -25,6 +31,9 @@ Behaviour worth knowing
 * Every simulator event carries `"simulation": true` and `"source": "simulator"`; this is stored as
   `wearable_data.is_simulated` and propagated to rollups, anomalies, context text and Neo4j. Real device
   events must send `"simulation": false, "source": "device"`.
+* Simulator and worker use the patient ID created by the seed script. While that benchmark ID is set,
+  the worker sends events for any other patient to the dead-letter stream instead of storing them.
+  `BENCHMARK_PATIENT_ID` may set the ID for a standalone run, but if the seed file exists it must match.
 * EWMA is time-aware (`alpha = 1 - exp(-dt/tau)`). Gaps over `EWMA_MAX_GAP_SECONDS` re-seed the state,
   out-of-order samples are stored but do not move it, outliers are flagged (`quality_flags`) and kept out of
   the state, and a sustained level shift is accepted after `EWMA_OUTLIER_RESEED_AFTER` samples.

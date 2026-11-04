@@ -22,6 +22,7 @@ import psycopg2.extras
 import redis
 
 from env_config import load_ingestion_environment
+from benchmark_config import benchmark_patient_id
 
 load_ingestion_environment(__file__)
 
@@ -34,6 +35,7 @@ log = logging.getLogger("worker")
 GROUP = os.getenv("WEARABLE_GROUP", "processor")
 CONSUMER = os.getenv("WEARABLE_CONSUMER", f"{socket.gethostname()}-{os.getpid()}")
 ROLLUP_INTERVAL = float(os.getenv("ROLLUP_INTERVAL_SECONDS", "60"))
+ALLOWED_PATIENT_ID = benchmark_patient_id()
 
 
 def connect_redis() -> redis.Redis:
@@ -83,12 +85,15 @@ def refresh_analytics(conn, patients: set[int]) -> None:
 
 def run() -> None:
     r, conn = connect_redis(), connect_db()
+    if ALLOWED_PATIENT_ID is not None:
+        log.info("Benchmark isolation enabled; wearable events restricted to patient_id=%s", ALLOWED_PATIENT_ID)
     touched: set[int] = set()
     last_rollup = time.monotonic()
     while True:
         try:
             stats = wearables.consume_batch(r, conn, wearables.STREAM, GROUP, CONSUMER,
-                                            on_stored=lambda res: touched.add(res["patient_id"]))
+                                            on_stored=lambda res: touched.add(res["patient_id"]),
+                                            allowed_patient_id=ALLOWED_PATIENT_ID)
             if any(stats.values()):
                 log.info("batch: %s", stats)
         except (redis.ConnectionError, redis.TimeoutError) as exc:

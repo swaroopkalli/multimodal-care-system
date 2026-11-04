@@ -32,14 +32,13 @@ Configuration (root .env; optional wearable_ingestion/.env overrides)
     REDIS_HOST               default: 127.0.0.1
     REDIS_PORT               default: 6379
     REDIS_CHANNEL            default: wearable:vitals
-    SIMULATOR_PATIENT_IDS    default: 1   (comma-separated list)
+    BENCHMARK_PATIENT_ID     benchmark id (also loaded from repository .benchmark_patient_id)
     SIMULATOR_INTERVAL_SECONDS default: 5
     SIMULATOR_DEVICE_ID      default: sim-device-001
 """
 
 from __future__ import annotations
 
-import itertools
 import math
 import json
 import logging
@@ -54,6 +53,7 @@ from pathlib import Path
 import redis
 
 from env_config import load_ingestion_environment
+from benchmark_config import benchmark_patient_id
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -82,11 +82,13 @@ DEVICE_ID: str = os.getenv("SIMULATOR_DEVICE_ID", "sim-device-001")
 BEHAVIORAL_UPDATE_INTERVAL: float = float(os.getenv("BEHAVIORAL_UPDATE_INTERVAL_SECONDS", "86400"))
 HEART_RATE_SCENARIO: str = os.getenv("SIMULATOR_HEART_RATE_SCENARIO", "normal").strip().lower()
 
-_raw_patient_ids = os.getenv("SIMULATOR_PATIENT_IDS", "1")
-PATIENT_IDS: list[int] = [int(p.strip()) for p in _raw_patient_ids.split(",") if p.strip()]
-
-if not PATIENT_IDS:
-    log.error("SIMULATOR_PATIENT_IDS must contain at least one patient ID.")
+PATIENT_ID = benchmark_patient_id()
+if PATIENT_ID is None:
+    log.error("No benchmark patient configured. Run scripts/create_demo_patient.sh first or set BENCHMARK_PATIENT_ID.")
+    sys.exit(1)
+legacy_patient_ids = os.getenv("SIMULATOR_PATIENT_IDS")
+if legacy_patient_ids and [int(p.strip()) for p in legacy_patient_ids.split(",") if p.strip()] != [PATIENT_ID]:
+    log.error("SIMULATOR_PATIENT_IDS must identify only benchmark patient %s.", PATIENT_ID)
     sys.exit(1)
 
 
@@ -189,26 +191,18 @@ def _connect_redis():
 
 def run() -> None:
     log.info(
-        "Simulator starting — channel=%s  patients=%s  interval=%.1fs",
-        REDIS_CHANNEL, PATIENT_IDS, INTERVAL,
+        "Simulator starting — channel=%s  patient=%s  interval=%.1fs",
+        REDIS_CHANNEL, PATIENT_ID, INTERVAL,
     )
 
     client = _connect_redis()
 
-    # Cycle through patient IDs indefinitely, giving each one a turn.
-    patient_cycle = itertools.cycle(PATIENT_IDS)
-    sequence_counters: dict[int, int] = {pid: 0 for pid in PATIENT_IDS}
-    patient_states = {
-        pid: PatientSimulationState(behavioral_interval=BEHAVIORAL_UPDATE_INTERVAL)
-        for pid in PATIENT_IDS
-    }
+    sequence = 0
+    patient_state = PatientSimulationState(behavioral_interval=BEHAVIORAL_UPDATE_INTERVAL)
 
     while True:
-        patient_id = next(patient_cycle)
-        sequence_counters[patient_id] += 1
-        seq = sequence_counters[patient_id]
-
-        event = _generate_vitals(patient_id, seq, patient_states[patient_id])
+        sequence += 1
+        event = _generate_vitals(PATIENT_ID, sequence, patient_state)
         payload = json.dumps(event)
 
         try:
@@ -216,8 +210,8 @@ def run() -> None:
             log.info(
                 "Published event_id=%s  patient=%s  seq=%s  hr=%s bpm  sleep=%s min  stream_id=%s",
                 event["event_id"][:8],
-                patient_id,
-                seq,
+                PATIENT_ID,
+                sequence,
                 event["heartrate"],
                 event["sleep_minutes"],
                 entry_id,
