@@ -45,7 +45,7 @@ def load_config() -> EwmaConfig:
     return EwmaConfig(
         version=int(_env_float("EWMA_CONFIG_VERSION", 1)),
         heartrate=SignalConfig(_env_float("EWMA_HR_TAU_SECONDS", 60), 2.0, 25, 230),
-        pedometer=SignalConfig(_env_float("EWMA_STEPS_TAU_SECONDS", 300), 50.0, 0, 5000),
+        pedometer=SignalConfig(_env_float("EWMA_STEPS_TAU_SECONDS", 300), 50.0, 0, int(_env_float("EWMA_STEPS_MAX", 50000))),
         daily_alpha=_env_float("EWMA_DAILY_ALPHA", 0.2),
         max_gap_seconds=_env_float("EWMA_MAX_GAP_SECONDS", 900),
         outlier_k=_env_float("EWMA_OUTLIER_K", 4.0),

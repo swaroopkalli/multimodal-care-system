@@ -39,6 +39,7 @@ Configuration (root .env; optional wearable_ingestion/.env overrides)
 
 from __future__ import annotations
 
+import itertools
 import math
 import json
 import logging
@@ -82,14 +83,24 @@ DEVICE_ID: str = os.getenv("SIMULATOR_DEVICE_ID", "sim-device-001")
 BEHAVIORAL_UPDATE_INTERVAL: float = float(os.getenv("BEHAVIORAL_UPDATE_INTERVAL_SECONDS", "86400"))
 HEART_RATE_SCENARIO: str = os.getenv("SIMULATOR_HEART_RATE_SCENARIO", "normal").strip().lower()
 
-PATIENT_ID = benchmark_patient_id()
-if PATIENT_ID is None:
-    log.error("No benchmark patient configured. Run scripts/create_demo_patient.sh first or set BENCHMARK_PATIENT_ID.")
-    sys.exit(1)
-legacy_patient_ids = os.getenv("SIMULATOR_PATIENT_IDS")
-if legacy_patient_ids and [int(p.strip()) for p in legacy_patient_ids.split(",") if p.strip()] != [PATIENT_ID]:
-    log.error("SIMULATOR_PATIENT_IDS must identify only benchmark patient %s.", PATIENT_ID)
-    sys.exit(1)
+def get_patient_ids() -> list[int]:
+    configured = [int(p.strip()) for p in os.getenv("SIMULATOR_PATIENT_IDS", "1,202,198").split(",") if p.strip()]
+    try:
+        from db import get_db_connection
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM patients ORDER BY id")
+        rows = cur.fetchall()
+        conn.close()
+        db_ids = [r["id"] for r in rows if r.get("id")]
+        if db_ids:
+            return sorted(set(configured + db_ids))
+    except Exception:
+        pass
+    return configured or [1, 202, 198]
+
+
+PATIENT_IDS: list[int] = get_patient_ids()
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +115,8 @@ if legacy_patient_ids and [int(p.strip()) for p in legacy_patient_ids.split(",")
 class PatientSimulationState:
     """Per-patient state so long-duration behavioral metrics stay coherent."""
 
-    def __init__(self, rng: random.Random | None = None, behavioral_interval: float = 86400):
+    def __init__(self, rng: random.Random | None = None, behavioral_interval: float = 86400,
+                 initial_steps: int | None = None):
         if behavioral_interval <= 0:
             raise ValueError("behavioral_interval must be greater than zero")
         self.rng = rng or random.Random()
@@ -112,6 +124,7 @@ class PatientSimulationState:
         self.behavioral_values: tuple[int, int] | None = None
         self.behavioral_bucket: int | None = None
         self.heart_rate = 72.0
+        self.pedometer = initial_steps if (initial_steps is not None and initial_steps > 0) else self.rng.randint(1200, 3500)
 
     def behaviors(self, now: float) -> tuple[int, int]:
         bucket = math.floor(now / self.behavioral_interval)
@@ -130,6 +143,12 @@ class PatientSimulationState:
             raise ValueError("scenario must be normal, elevated, or low")
         self.heart_rate += 0.22 * (target - self.heart_rate) + self.rng.gauss(0, 3.0)
         return max(35, min(190, round(self.heart_rate)))
+
+    def next_pedometer(self) -> int:
+        """Increment pedometer monotonically. Steps only accumulate, never decrease."""
+        delta = self.rng.randint(1, 6) if self.rng.random() < 0.85 else 0
+        self.pedometer += delta
+        return self.pedometer
 
 
 def _generate_vitals(patient_id: int, sequence: int, state: PatientSimulationState | None = None,
@@ -150,7 +169,7 @@ def _generate_vitals(patient_id: int, sequence: int, state: PatientSimulationSta
         "schema_version": 2,
 
         # Columns matching wearable_data schema (backend/db.py)
-        "pedometer": random.randint(100, 800),          # steps per interval
+        "pedometer": state.next_pedometer(),          # cumulative steps, monotonic increment
         "sleep_minutes": sleep_minutes,       # last completed nightly session, stable per day
         "screentime_minutes": screentime_minutes,   # synthetic daily aggregate, stable per day
         "heartrate": state.next_heart_rate(scenario or HEART_RATE_SCENARIO),
@@ -190,29 +209,50 @@ def _connect_redis():
 # ---------------------------------------------------------------------------
 
 def run() -> None:
+    patient_ids = get_patient_ids()
     log.info(
-        "Simulator starting — channel=%s  patient=%s  interval=%.1fs",
-        REDIS_CHANNEL, PATIENT_ID, INTERVAL,
+        "Simulator starting — channel=%s  patients=%s  interval=%.1fs",
+        REDIS_CHANNEL, patient_ids, INTERVAL,
     )
 
     client = _connect_redis()
 
-    sequence = 0
-    patient_state = PatientSimulationState(behavioral_interval=BEHAVIORAL_UPDATE_INTERVAL)
+    # Cycle through patient IDs indefinitely, giving each one a turn.
+    patient_cycle = itertools.cycle(patient_ids)
+    sequence_counters: dict[int, int] = {pid: 0 for pid in patient_ids}
+    patient_states: dict[int, PatientSimulationState] = {}
+    for pid in patient_ids:
+        initial_steps = None
+        try:
+            latest = client.hgetall(f"patient:{pid}:vitals:latest")
+            if latest and "pedometer" in latest:
+                val = int(latest["pedometer"])
+                if val > 0:
+                    initial_steps = val
+        except Exception:
+            pass
+        patient_states[pid] = PatientSimulationState(
+            behavioral_interval=BEHAVIORAL_UPDATE_INTERVAL,
+            initial_steps=initial_steps,
+        )
 
     while True:
-        sequence += 1
-        event = _generate_vitals(PATIENT_ID, sequence, patient_state)
+        patient_id = next(patient_cycle)
+        sequence_counters[patient_id] += 1
+        seq = sequence_counters[patient_id]
+
+        event = _generate_vitals(patient_id, seq, patient_states[patient_id])
         payload = json.dumps(event)
 
         try:
             entry_id = client.xadd(REDIS_CHANNEL, {"data": payload}, maxlen=100_000, approximate=True)
             log.info(
-                "Published event_id=%s  patient=%s  seq=%s  hr=%s bpm  sleep=%s min  stream_id=%s",
+                "Published event_id=%s  patient=%s  seq=%s  hr=%s bpm  steps=%s  sleep=%s min  stream_id=%s",
                 event["event_id"][:8],
-                PATIENT_ID,
-                sequence,
+                patient_id,
+                seq,
                 event["heartrate"],
+                event["pedometer"],
                 event["sleep_minutes"],
                 entry_id,
             )

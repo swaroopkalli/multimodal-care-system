@@ -41,6 +41,24 @@ class SimulatorTests(unittest.TestCase):
         self.assertIs(first["simulation"], True)
         self.assertEqual(first["source"], "simulator")
 
+    def test_pedometer_increments_monotonically(self):
+        state = PatientSimulationState(random.Random(42), initial_steps=1500)
+        steps = [state.next_pedometer() for _ in range(100)]
+        # Must start from baseline and never decrease
+        self.assertGreaterEqual(steps[0], 1500)
+        for i in range(1, len(steps)):
+            self.assertGreaterEqual(steps[i], steps[i - 1], f"Step decreased at index {i}: {steps[i]} < {steps[i-1]}")
+        # Over 100 ticks, it should accumulate progress
+        self.assertGreater(steps[-1], steps[0])
+
+    def test_generated_vitals_pedometer_does_not_decrease(self):
+        state = PatientSimulationState(random.Random(99), initial_steps=2000)
+        events = [_generate_vitals(1, i, state) for i in range(1, 20)]
+        step_counts = [e["pedometer"] for e in events]
+        for i in range(1, len(step_counts)):
+            self.assertGreaterEqual(step_counts[i], step_counts[i - 1])
+        self.assertGreater(step_counts[-1], step_counts[0])
+
 
 if __name__ == "__main__":
     unittest.main()

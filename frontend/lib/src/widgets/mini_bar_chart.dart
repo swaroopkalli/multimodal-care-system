@@ -14,7 +14,14 @@ class MiniBarChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final max = values.reduce((a, b) => a > b ? a : b);
+    if (values.isEmpty) {
+      return const SizedBox(
+        height: 148,
+        child: Center(child: Text('No trend data available.')),
+      );
+    }
+    final rawMax = values.reduce((a, b) => a > b ? a : b);
+    final max = rawMax > 0 ? rawMax : 1.0;
     final barColor = color ?? Theme.of(context).colorScheme.primary;
 
     return SizedBox(

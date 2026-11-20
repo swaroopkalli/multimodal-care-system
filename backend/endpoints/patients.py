@@ -184,10 +184,41 @@ def patient_summary(patient_id):
             a["day"] = a["day"].isoformat()
         cur.execute("SELECT count(*) AS n FROM medications WHERE patient_id = %s", (patient_id,))
         meds = cur.fetchone()["n"]
+
+        cur.execute("SELECT mood, stress, sleep_hours, energy, side_effects, created_at FROM patient_checkins "
+                    "WHERE patient_id = %s ORDER BY id DESC LIMIT 7", (patient_id,))
+        checkins = cur.fetchall()
+        for c in checkins:
+            if c.get("created_at"):
+                c["created_at"] = c["created_at"].isoformat()
+
+        cur.execute("SELECT count(*) AS total, count(*) FILTER (WHERE medication_confirmed = true) AS confirmed "
+                    "FROM caretaker_observations WHERE patient_id = %s", (patient_id,))
+        obs = cur.fetchone()
+        adherence_pct = round(100.0 * obs["confirmed"] / obs["total"]) if (obs and obs["total"] > 0) else None
+
+        valid_moods = [c["mood"] for c in checkins if c.get("mood") is not None]
+        mood_avg = round(sum(valid_moods) / len(valid_moods), 1) if valid_moods else None
+
+        valid_daily_sleep = [d["sleep_minutes"] for d in daily if d.get("sleep_minutes") is not None]
+        wearable_sleep_avg = round(sum(valid_daily_sleep) / (60.0 * len(valid_daily_sleep)), 1) if valid_daily_sleep else None
+
+        valid_steps = [d["steps_total"] for d in daily if d.get("steps_total") is not None]
+        steps_avg = round(sum(valid_steps) / len(valid_steps)) if valid_steps else None
     finally:
         conn.close()
-    return jsonify({"patient": patient, "daily": daily, "anomalies": anomalies, "medication_count": meds,
-                    "live": live_vitals.get_latest(patient_id)}), 200
+    return jsonify({
+        "patient": patient,
+        "daily": daily,
+        "anomalies": anomalies,
+        "medication_count": meds,
+        "checkins": checkins,
+        "mood_avg": mood_avg,
+        "adherence_pct": adherence_pct,
+        "wearable_sleep_avg": wearable_sleep_avg,
+        "steps_avg": steps_avg,
+        "live": live_vitals.get_latest(patient_id),
+    }), 200
 
 
 @role_required("patient", "doctor", "caretaker")

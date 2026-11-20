@@ -229,6 +229,52 @@ def generate_chat_response(system_prompt: str, chat_history: list, query: str) -
     return generate_chat_response_ex(system_prompt, chat_history, query).content
 
 
+def _nvidia_nim_embed(texts: list[str]) -> list[list[float]]:
+    api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+    if not api_key:
+        return []
+    base_url = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/")
+    model = os.getenv("NVIDIA_EMBED_MODEL", "nvidia/nemotron-3.5-embed-1b").strip()
+    try:
+        dim = int(os.getenv("EMBED_DIMENSIONS", "768"))
+    except ValueError:
+        dim = 768
+    timeout, retries = _timeouts()
+    url = f"{base_url}/embeddings"
+
+    payload = json.dumps({
+        "input": texts,
+        "model": model,
+        "input_type": "passage",
+        "dimensions": dim,
+    }).encode("utf-8")
+
+    request = Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "MindBridge/1.0",
+        },
+        method="POST",
+    )
+
+    for attempt in range(retries + 1):
+        try:
+            with urlopen(request, timeout=timeout, context=_get_ssl_context()) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            data = result.get("data")
+            if not isinstance(data, list) or len(data) != len(texts):
+                raise LLMError("NVIDIA embedding API returned malformed response")
+            return [item["embedding"] for item in data]
+        except Exception as exc:
+            if attempt >= retries:
+                raise LLMError(f"NVIDIA embedding failed: {exc}") from exc
+            time.sleep(1.0)
+    return []
+
+
 def embed_texts(texts: list[str], input_type: str = "passage") -> list[list[float]]:
     """Create NVIDIA NIM embeddings in passage or query mode for Neo4j RAG."""
     api_key = os.getenv("NVIDIA_API_KEY", "").strip()

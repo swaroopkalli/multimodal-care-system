@@ -102,7 +102,12 @@ def _upsert(cur, item: dict) -> None:
         if existing and existing[0]["h"] == digest and existing[0]["m"] == model:
             vector = None                                # unchanged: keep the stored embedding
         else:
-            vector = embed_document(text)
+            try:
+                vector = embed_document(text)
+            except Exception as exc:
+                log.warning("could not generate embedding for %s %s: %s; saving node without embedding",
+                            item["entity_type"], eid, exc)
+                vector = None
         props = {**props, "text_hash": digest, "embedding_model": model}
         if vector is not None:
             props["embedding"] = vector

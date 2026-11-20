@@ -236,11 +236,12 @@ def ensure_group(r, stream: str, group: str) -> None:
 
 
 def consume_batch(r, conn, stream: str, group: str, consumer: str, count: int = 50,
-                  block_ms: int = 1000, on_stored=None) -> dict:
+                  block_ms: int = 1000, on_stored=None, allowed_patient_id: int | None = None) -> dict:
     """Read this consumer's pending entries first, then new ones. Returns counters.
 
     Permanent rejections go to the dead-letter stream and are acknowledged;
     transient failures are left pending and re-raised after the batch so the caller can reconnect.
+    If ``allowed_patient_id`` is set (benchmark mode) events for other patients are silently acked and skipped.
     """
     stats = {"stored": 0, "duplicate": 0, "rejected": 0}
     transient: Exception | None = None
@@ -250,7 +251,11 @@ def consume_batch(r, conn, stream: str, group: str, consumer: str, count: int = 
         for _stream, entries in resp or []:
             for entry_id, fields in entries:
                 try:
-                    result = process_event(conn, r, json.loads(fields.get("data", "null")))
+                    raw = json.loads(fields.get("data", "null"))
+                    if allowed_patient_id is not None and isinstance(raw, dict) and raw.get("patient_id") != allowed_patient_id:
+                        r.xack(stream, group, entry_id)
+                        continue
+                    result = process_event(conn, r, raw)
                     stats[result["status"]] += 1
                     if on_stored:
                         on_stored(result)

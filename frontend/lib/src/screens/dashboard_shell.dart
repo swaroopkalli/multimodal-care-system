@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../state/care_state.dart';
-import 'architecture_screen.dart';
 import 'auth_screen.dart';
 
 class DashboardShell extends StatefulWidget {
@@ -38,15 +37,15 @@ class _DashboardShellState extends State<DashboardShell>
       appBar: AppBar(
         title: const Text('MindBridge', style: TextStyle(fontWeight: FontWeight.w800)),
         centerTitle: true,
-        actions: [
-          IconButton(
-            tooltip: 'System architecture',
-            icon: const Icon(Icons.account_tree_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ArchitectureScreen()),
-            ),
-          ),
-        ],
+        // actions: [
+        //   IconButton(
+        //     tooltip: 'System architecture',
+        //     icon: const Icon(Icons.account_tree_outlined),
+        //     onPressed: () => Navigator.of(context).push(
+        //       MaterialPageRoute(builder: (_) => const ArchitectureScreen()),
+        //     ),
+        //   ),
+        // ],
       ),
       body: AnimatedBuilder(
         animation: _controller,

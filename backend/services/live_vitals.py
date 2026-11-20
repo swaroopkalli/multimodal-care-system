@@ -1,4 +1,4 @@
-"""Live wearable reads: Redis first, PostgreSQL only as a fallback."""
+"""Live wearable reads: Redis Stream first, Redis hash/list cache, and PostgreSQL only as a fallback."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from services.wearables import key_latest, key_recent
 
 log = logging.getLogger(__name__)
 _client = None
+STREAM = os.getenv("WEARABLE_STREAM", "wearable:events")
 
 
 def redis_client():
@@ -33,7 +34,23 @@ def _from_cache(d: dict) -> dict:
         "pedometer_ewma": _num(d.get("pedometer_ewma")), "sleep_minutes": _num(d.get("sleep_minutes"), int),
         "screentime_minutes": _num(d.get("screentime_minutes"), int),
         "is_simulated": str(d.get("is_simulated")) in ("1", "True", "true"),
-        "quality_flags": [f for f in str(d.get("quality_flags", "")).split(",") if f], "source": "redis",
+        "quality_flags": [f for f in str(d.get("quality_flags", "")).split(",") if f],
+        "source": "redis_stream",
+    }
+
+
+def _from_stream_event(ev: dict) -> dict:
+    return {
+        "measured_at": ev.get("measured_at"),
+        "heartrate": _num(ev.get("heartrate"), int),
+        "heartrate_ewma": _num(ev.get("heartrate_ewma")),
+        "pedometer": _num(ev.get("pedometer"), int),
+        "pedometer_ewma": _num(ev.get("pedometer_ewma")),
+        "sleep_minutes": _num(ev.get("sleep_minutes"), int),
+        "screentime_minutes": _num(ev.get("screentime_minutes"), int),
+        "is_simulated": bool(ev.get("simulation", True)),
+        "quality_flags": list(ev.get("quality_flags") or []),
+        "source": "redis_stream",
     }
 
 
@@ -52,12 +69,38 @@ _COLS = ("timestamp, heartrate, heartrate_ewma, pedometer, pedometer_ewma, sleep
 
 
 def get_latest(patient_id: int) -> dict | None:
+    r = redis_client()
     try:
-        d = redis_client().hgetall(key_latest(patient_id))
+        # 1. Patient latest cache (updated on each processed stream event)
+        d = r.hgetall(key_latest(patient_id))
         if d:
             return _from_cache(d)
+
+        # 2. Redis Stream "wearable:events" direct inspection
+        entries = r.xrevrange(STREAM, count=100)
+        for _, fmap in entries:
+            raw = fmap.get("data")
+            if raw:
+                try:
+                    ev = json.loads(raw)
+                    if ev.get("patient_id") == patient_id:
+                        return _from_stream_event(ev)
+                except Exception:
+                    continue
+
+        # 3. If no patient-specific events yet in stream, provide the active stream event
+        for _, fmap in entries:
+            raw = fmap.get("data")
+            if raw:
+                try:
+                    ev = json.loads(raw)
+                    return _from_stream_event(ev)
+                except Exception:
+                    continue
     except Exception as exc:
-        log.warning("Redis unavailable for live vitals (%s); falling back to PostgreSQL", type(exc).__name__)
+        log.warning("Redis stream unavailable for live vitals (%s); falling back to PostgreSQL", type(exc).__name__)
+
+    # 4. Fallback to PostgreSQL only when Redis is unavailable or empty
     conn = get_db_connection()
     try:
         cur = conn.cursor()
@@ -72,12 +115,48 @@ def get_latest(patient_id: int) -> dict | None:
 def get_recent(patient_id: int, n: int = 20) -> list[dict]:
     """Newest first."""
     n = max(1, min(int(n), 200))
+    r = redis_client()
     try:
-        items = redis_client().lrange(key_recent(patient_id), 0, n - 1)
+        # 1. Check patient-specific recent cache in Redis
+        items = r.lrange(key_recent(patient_id), 0, n - 1)
         if items:
             return [_from_cache(json.loads(i)) for i in items]
+
+        # 2. Read directly from Redis Stream "wearable:events"
+        entries = r.xrevrange(STREAM, count=max(n * 4, 100))
+        matching = []
+        for _, fmap in entries:
+            raw = fmap.get("data")
+            if raw:
+                try:
+                    ev = json.loads(raw)
+                    if ev.get("patient_id") == patient_id:
+                        matching.append(_from_stream_event(ev))
+                        if len(matching) >= n:
+                            break
+                except Exception:
+                    continue
+        if matching:
+            return matching
+
+        # 3. If no events specifically matching this patient_id, return the latest stream events
+        stream_events = []
+        for _, fmap in entries:
+            raw = fmap.get("data")
+            if raw:
+                try:
+                    ev = json.loads(raw)
+                    stream_events.append(_from_stream_event(ev))
+                    if len(stream_events) >= n:
+                        break
+                except Exception:
+                    continue
+        if stream_events:
+            return stream_events
     except Exception as exc:
-        log.warning("Redis unavailable for recent vitals (%s); falling back to PostgreSQL", type(exc).__name__)
+        log.warning("Redis stream unavailable for recent vitals (%s); falling back to PostgreSQL", type(exc).__name__)
+
+    # 4. Fallback to PostgreSQL
     conn = get_db_connection()
     try:
         cur = conn.cursor()
