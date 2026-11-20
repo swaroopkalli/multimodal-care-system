@@ -1,9 +1,11 @@
 """Staff and patient chat: auth -> input guard -> budgeted context + Neo4j retrieval -> LLM -> output guard."""
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+# pyrefly: ignore[missing-import]
 from flask import jsonify, request
 
 from db import get_db_connection
@@ -14,7 +16,7 @@ from services.context_manager import ContextBudgetError, EvidenceRef, assemble_c
 from services.graph import retrieval
 from services.graph.client import GraphUnavailable
 from services.graph.outbox import enqueue
-from services.guardrails import check_input, run_guarded
+from services.guardrails import GuardedReply, check_input, run_guarded
 
 log = logging.getLogger(__name__)
 
@@ -29,9 +31,30 @@ Provide concise, structured summaries of patient history, reported symptoms, med
 Keep responses concise, structured and analytical."""
 
 PATIENT_SYSTEM_PROMPT = f"""You are an empathetic wellness coach AI supporting a patient.
-Offer supportive conversation, stress-reduction and sleep-hygiene ideas, and help the patient understand their own sleep, activity and heart-rate trends. Maintain an encouraging, supportive tone and reply directly to the conversation.
+Reply DIRECTLY, WARMLY, and BRIEFLY in AT MOST 3 SHORT SENTENCES. Use plain, conversational language — never use bullet points, headers, or clinical jargon.
+Acknowledge the patient's feelings with genuine validation, kindness, and calm support.
+Offer supportive conversation, stress-reduction ideas, and help the patient understand their own sleep, activity and heart-rate trends.
+End with a gentle, supportive presence (e.g., "I'm right here with you." or "We can take this one step at a time.").
 {POLICY}
 Always encourage seeking professional help when appropriate."""
+
+MAX_PATIENT_TOKENS = int(os.getenv("CHAT_MAX_PATIENT_TOKENS", "120"))
+
+
+def trim_to_sentences(text: str, max_tokens: int) -> str:
+    """Trim response at sentence boundary to respect distress-adapted cognitive limits."""
+    from services.guardrails.policy import sentences
+    if not text or len(text.split()) * 1.3 <= max_tokens:
+        return text
+    sents = sentences(text)
+    out, budget_rem = [], float(max_tokens)
+    for s in sents:
+        cost = len(s.split()) * 1.3
+        if budget_rem - cost < 0 and out:
+            break
+        out.append(s)
+        budget_rem -= cost
+    return " ".join(out) if out else sents[0]
 
 # Long-message condensation target; context_manager owns the final prompt budget.
 SHARE_QUERY = 0.25
@@ -194,6 +217,10 @@ def _run_chat(role, patient_id, query):
     except llm.LLMError:
         log.exception("LLM unavailable")
         return jsonify({"error": "The language model is currently unavailable. Please try again shortly."}), 503
+
+    if role == "patient" and reply.action == "allowed":
+        trimmed_text = trim_to_sentences(reply.text, MAX_PATIENT_TOKENS)
+        reply = GuardedReply(trimmed_text, reply.action, reply.attempts, reply.categories)
 
     if reply.action == "fallback":
         record_guardrail(patient_id, role, "output", ",".join(sorted(set(reply.categories)))[:48] or "unknown",

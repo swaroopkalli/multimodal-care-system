@@ -33,6 +33,23 @@ class LLMResult:
         return self.done_reason == "length"
 
 
+def format_curl_command(endpoint: str, headers: dict[str, str], payload_str: str, mask_key: bool = False) -> str:
+    """Format an HTTP request as an executable curl command."""
+    hdr_flags = []
+    for k, v in headers.items():
+        if mask_key and k.lower() == "authorization" and v.startswith("Bearer "):
+            key = v[7:]
+            v = f"Bearer {key[:8]}...{key[-4:]}"
+        hdr_flags.append(f"-H '{k}: {v}'")
+    headers_formatted = " \\\n  ".join(hdr_flags)
+    try:
+        parsed = json.loads(payload_str)
+        payload_formatted = json.dumps(parsed, indent=2)
+    except Exception:
+        payload_formatted = payload_str
+    return f"curl -X POST '{endpoint}' \\\n  {headers_formatted} \\\n  -d '{payload_formatted}'"
+
+
 def _get_ssl_context() -> ssl.SSLContext:
     if os.getenv("NVIDIA_SSL_VERIFY", "true").lower() in {"0", "false", "no"}:
         ctx = ssl.create_default_context()
@@ -122,6 +139,11 @@ def _nvidia_nim_chat_ex(messages: list[dict[str, str]], temperature: float) -> L
         "Authorization": f"Bearer {api_key}",
         "Accept": "application/json",
     }
+
+    if os.getenv("LLM_LOG_CURL", "").lower() in {"1", "true", "yes"}:
+        curl_cmd = format_curl_command(endpoint, headers, payload.decode("utf-8"), mask_key=False)
+        print(f"\n\033[96m[CURL CALL to NVIDIA NIM]\033[0m\n{curl_cmd}\n")
+
     request = Request(endpoint, data=payload, headers=headers, method="POST")
     ssl_context = _get_ssl_context()
     urlopen_kwargs = {"context": ssl_context} if ssl_context is not None else {}
@@ -162,9 +184,11 @@ def _nvidia_nim_chat_ex(messages: list[dict[str, str]], temperature: float) -> L
                 raise LLMError("NVIDIA API authentication failed (HTTP 401). Please verify your NVIDIA_API_KEY.") from exc
             if exc.code == 404:
                 raise LLMError(f"NVIDIA model '{model}' not found or endpoint invalid (HTTP 404): {detail[:200]}") from exc
-            if exc.code == 429:
+            if exc.code in {429, 502, 503, 504}:
                 if attempt >= retries:
-                    raise LLMError(f"NVIDIA API rate limit exceeded (HTTP 429): {detail[:200]}") from exc
+                    raise LLMError(f"NVIDIA API rate limit or service overload (HTTP {exc.code}): {detail[:200]}") from exc
+                time.sleep(min(1.0 * (2 ** attempt), 4.0))
+                continue
             elif exc.code < 500 or attempt >= retries:
                 raise LLMError(f"NVIDIA API request failed (HTTP {exc.code}): {detail[:300]}") from exc
 
@@ -316,6 +340,11 @@ def embed_texts(texts: list[str], input_type: str = "passage") -> list[list[floa
             detail = exc.read().decode("utf-8", errors="replace")[:300]
             if exc.code == 401:
                 raise LLMError("NVIDIA embedding authentication failed (HTTP 401); verify NVIDIA_API_KEY") from exc
+            if exc.code in {429, 502, 503, 504}:
+                if attempt >= retries:
+                    raise LLMError(f"NVIDIA embedding service is overloaded (HTTP {exc.code}): {detail}") from exc
+                time.sleep(min(1.0 * (2 ** attempt), 4.0))
+                continue
             if exc.code < 500 or attempt >= retries:
                 raise LLMError(f"NVIDIA embedding request failed (HTTP {exc.code}): {detail}") from exc
         except (URLError, TimeoutError, OSError) as exc:
