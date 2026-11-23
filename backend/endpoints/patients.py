@@ -48,6 +48,22 @@ def submit_checkin():
                     "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
                     (patient_id, values["mood"], values["stress"], values["sleep_hours"], values["energy"], effects))
         row_id = cur.fetchone()["id"]
+
+        # Threshold-driven clinical alerts for doctors and caretakers
+        from endpoints.alerts import record_alert
+        if values.get("stress", 0) >= 8 or values.get("mood", 5) <= 2:
+            record_alert(
+                cur, patient_id, "severe_distress", "high",
+                f"Patient reported high distress: stress {values.get('stress', 0):.0f}/10, mood {values.get('mood', 5):.0f}/5.",
+                source="checkin"
+            )
+        if effects:
+            record_alert(
+                cur, patient_id, "side_effects", "medium",
+                f"Patient reported medication side effects: {', '.join(effects)}.",
+                source="checkin"
+            )
+
         conn.commit()
         return jsonify({"message": "Check-in saved", "id": row_id}), 201
     except Exception:
@@ -79,6 +95,66 @@ def submit_journal():
         conn.rollback()
         log.exception("journal failed")
         return jsonify({"error": "Could not save the journal entry"}), 500
+    finally:
+        conn.close()
+
+
+@role_required("patient")
+def get_my_journals():
+    patient_id, _ = current_user()
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT j.id, j.patient_id, j.entry, j.created_at, j.doctor_reply, j.doctor_reply_at, "
+            "d.name AS doctor_name "
+            "FROM journal_entries j "
+            "LEFT JOIN doctors d ON j.replied_by_doctor_id = d.id "
+            "WHERE j.patient_id = %s "
+            "ORDER BY j.created_at DESC, j.id DESC LIMIT 50",
+            (patient_id,)
+        )
+        journals = cur.fetchall()
+        for j in journals:
+            if j.get("created_at"):
+                j["created_at"] = j["created_at"].isoformat()
+            if j.get("doctor_reply_at"):
+                j["doctor_reply_at"] = j["doctor_reply_at"].isoformat()
+        return jsonify({"journals": journals}), 200
+    except Exception:
+        log.exception("get_my_journals failed")
+        return jsonify({"error": "Could not load journals"}), 500
+    finally:
+        conn.close()
+
+
+@role_required("doctor", "caretaker")
+def get_patient_journals(patient_id):
+    patient_id, error = resolve_patient_id(patient_id, strict=True)
+    if error:
+        return error
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT j.id, j.patient_id, j.entry, j.created_at, j.doctor_reply, j.doctor_reply_at, "
+            "d.name AS doctor_name "
+            "FROM journal_entries j "
+            "LEFT JOIN doctors d ON j.replied_by_doctor_id = d.id "
+            "WHERE j.patient_id = %s "
+            "ORDER BY j.created_at DESC, j.id DESC LIMIT 50",
+            (patient_id,)
+        )
+        journals = cur.fetchall()
+        for j in journals:
+            if j.get("created_at"):
+                j["created_at"] = j["created_at"].isoformat()
+            if j.get("doctor_reply_at"):
+                j["doctor_reply_at"] = j["doctor_reply_at"].isoformat()
+        return jsonify({"journals": journals}), 200
+    except Exception:
+        log.exception("get_patient_journals failed")
+        return jsonify({"error": "Could not load journals"}), 500
     finally:
         conn.close()
 

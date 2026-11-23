@@ -69,7 +69,8 @@ def _source_hash(cur, patient_id: int) -> str:
         " (SELECT coalesce(max(updated_at)::text,'') FROM wearable_daily WHERE patient_id=%(p)s) w,"
         " (SELECT coalesce(max(id),0) FROM wearable_anomalies WHERE patient_id=%(p)s) a,"
         " (SELECT coalesce(max(id),0) FROM patient_checkins WHERE patient_id=%(p)s) c,"
-        " (SELECT coalesce(max(id),0) FROM caretaker_observations WHERE patient_id=%(p)s) o", {"p": patient_id})
+        " (SELECT coalesce(max(id),0) FROM caretaker_observations WHERE patient_id=%(p)s) o,"
+        " (SELECT coalesce(max(id),0) FROM patient_care_directives WHERE patient_id=%(p)s AND is_active = TRUE) d", {"p": patient_id})
     return hashlib.sha256(repr(sorted(cur.fetchone().items())).encode()).hexdigest()
 
 
@@ -79,6 +80,19 @@ def _build_static_sections(cur, patient_id: int, staff: bool) -> list:
     if not patient:
         raise ValueError(f"Patient with id {patient_id} not found")
     sections = [{"name": "overview", "priority": 0, "text": f"Patient Overview:\nPatient Name: {patient['name']}"}]
+
+    # Active doctor directives (injected at priority 0 so the model reflects the doctor's clinical guidance)
+    cur.execute("SELECT directive FROM patient_care_directives "
+                "WHERE patient_id = %s AND is_active = TRUE ORDER BY id ASC", (patient_id,))
+    directives = cur.fetchall()
+    if directives:
+        sections.append({
+            "name": "directives",
+            "priority": 0,
+            "text": "Active Clinician Directives (Priority guidance from patient's doctor):\n" + "\n".join(
+                f"- {d['directive']}" for d in directives
+            )
+        })
 
     cur.execute("SELECT name, type, duration FROM medications WHERE patient_id = %s ORDER BY id", (patient_id,))
     meds = cur.fetchall()

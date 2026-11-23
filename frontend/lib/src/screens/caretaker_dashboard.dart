@@ -33,6 +33,9 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
   String? _ragSummary;
   bool _isSaving = false;
 
+  List<dynamic> _alertsList = [];
+  bool _isLoadingAlerts = false;
+
   @override
   void initState() {
     super.initState();
@@ -66,9 +69,36 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
         _ragSummary = null;
         _loadError = null;
       });
+      _fetchAlerts();
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadError = 'Could not load patient data: $e');
+    }
+  }
+
+  Future<void> _fetchAlerts() async {
+    setState(() => _isLoadingAlerts = true);
+    try {
+      final res = await _apiClient.get('/alerts');
+      if (!mounted) return;
+      setState(() {
+        _alertsList = (res['alerts'] as List?) ?? [];
+      });
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isLoadingAlerts = false);
+    }
+  }
+
+  Future<void> _acknowledgeAlert(int alertId) async {
+    try {
+      await _apiClient.post('/alerts/$alertId/acknowledge', {});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Alert acknowledged.')));
+      _fetchAlerts();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not acknowledge: $e')));
     }
   }
 
@@ -295,7 +325,115 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
       padding: const EdgeInsets.all(16),
       children: [
         SectionCard(
-          title: 'Alerts',
+          title: 'Clinical Alerts',
+          action: IconButton(
+            icon: const Icon(Icons.refresh, size: 20),
+            onPressed: _fetchAlerts,
+            tooltip: 'Refresh Alerts',
+          ),
+          child: _isLoadingAlerts && _alertsList.isEmpty
+              ? const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator()))
+              : _alertsList.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'No clinical alerts. Alerts are automatically triggered by severe distress check-ins (stress ≥ 8 or mood ≤ 2), reported side-effects, or crisis queries.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  : Column(
+                      children: _alertsList.map<Widget>((a) {
+                        final id = a['id'] as int;
+                        final isCrit = a['severity'] == 'critical';
+                        final isAck = a['is_acknowledged'] == true;
+                        final created = a['created_at'] != null
+                            ? (a['created_at'] as String).replaceFirst('T', ' ').split('.').first
+                            : '';
+                        final typeStr = (a['alert_type'] ?? 'alert').toString().replaceAll('_', ' ').toUpperCase();
+
+                        return Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isAck
+                                ? Theme.of(context).cardColor
+                                : (isCrit ? Colors.red.withOpacity(0.12) : Colors.amber.withOpacity(0.12)),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isAck
+                                  ? const Color(0x22FFFFFF)
+                                  : (isCrit ? Colors.red.withOpacity(0.5) : Colors.amber.withOpacity(0.5)),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        isCrit ? Icons.error_outline : Icons.warning_amber,
+                                        size: 16,
+                                        color: isCrit ? Colors.redAccent : Colors.amber,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        typeStr,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: isCrit ? Colors.redAccent : Colors.amber,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Text(created, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(a['message'] ?? '', style: const TextStyle(fontSize: 13, height: 1.3)),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: isAck ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      isAck ? 'Acknowledged' : 'Needs Review',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: isAck ? Colors.greenAccent : Colors.orangeAccent,
+                                      ),
+                                    ),
+                                  ),
+                                  if (!isAck)
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      onPressed: () => _acknowledgeAlert(id),
+                                      child: const Text('Acknowledge', style: TextStyle(fontSize: 12)),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+        ),
+        const SizedBox(height: 12),
+        SectionCard(
+          title: 'Wearable Biometric Changes',
           child: _anomalies.isEmpty
               ? const Text('No unusual changes detected against this patient\'s own history.')
               : Column(
@@ -303,7 +441,7 @@ class _CaretakerDashboardState extends State<CaretakerDashboard> {
                       .map(
                         (a) => ListTile(
                           contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.warning_amber),
+                          leading: const Icon(Icons.show_chart),
                           title: Text('${a['signal']} ${a['direction']} on ${a['day']}'),
                           subtitle: Text(
                               'Observed ${(a['observed'] as num).toStringAsFixed(0)}, usual '

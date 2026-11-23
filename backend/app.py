@@ -8,11 +8,15 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 
 from db import create_tables
+from endpoints.alerts import acknowledge_alert, list_alerts
 from endpoints.auth import (login_caretaker, login_doctor, login_patient, register_caretaker,
                             register_doctor, register_patient)
 from endpoints.chat import patient_chat, staff_chat
-from endpoints.doctor_notes import add_doctor_note, get_doctor_notes, get_wearable_data
-from endpoints.patients import (add_medication, list_patients, live_vitals_route, patient_summary,
+from endpoints.doctor_notes import (add_doctor_note, add_journal_reply, add_patient_directive,
+                                    get_doctor_notes, get_patient_chat_digest, get_patient_chat_history,
+                                    get_patient_directives, get_wearable_data)
+from endpoints.patients import (add_medication, get_my_journals, get_patient_journals,
+                                list_patients, live_vitals_route, patient_summary,
                                 submit_checkin, submit_journal, submit_observation)
 
 log = logging.getLogger(__name__)
@@ -64,6 +68,15 @@ ROUTES = [
     ("/api/patients", list_patients, ["GET"]),
     ("/api/patients/<int:patient_id>/summary", patient_summary, ["GET"]),
     ("/api/patients/<int:patient_id>/vitals/live", live_vitals_route, ["GET"]),
+    ("/api/patient/journals", get_my_journals, ["GET"]),
+    ("/api/patients/<int:patient_id>/journals", get_patient_journals, ["GET"]),
+    ("/api/doctor/journal_reply", add_journal_reply, ["POST"]),
+    ("/api/doctor/directives", add_patient_directive, ["POST"]),
+    ("/api/patients/<int:patient_id>/directives", get_patient_directives, ["GET"]),
+    ("/api/patients/<int:patient_id>/chat_digest", get_patient_chat_digest, ["GET"]),
+    ("/api/patients/<int:patient_id>/chat_history", get_patient_chat_history, ["GET"]),
+    ("/api/alerts", list_alerts, ["GET"]),
+    ("/api/alerts/<int:alert_id>/acknowledge", acknowledge_alert, ["POST"]),
 ]
 for rule, view, methods in ROUTES:
     app.add_url_rule(rule, view_func=view, methods=methods)

@@ -10,6 +10,7 @@ from uuid import uuid4
 from flask import jsonify, request
 
 from db import get_db_connection
+from endpoints.alerts import record_alert
 from endpoints.authz import current_user, resolve_patient_id, role_required
 from services import budget, llm, memory
 from services.context import build_context
@@ -141,6 +142,18 @@ def _run_chat(role, patient_id, query):
     if not decision.allowed:
         record_guardrail(patient_id, role, "input", decision.category,
                          "crisis" if decision.action == "crisis" else "refused")
+        if decision.action == "crisis":
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                record_alert(cur, patient_id, "crisis_escalation", "critical",
+                             "Patient expressed crisis or self-harm distress in chat.", source="chat")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                log.exception("failed to record crisis alert")
+            finally:
+                conn.close()
         return jsonify({"response": decision.message,
                         "guardrail": {"action": "crisis" if decision.action == "crisis" else "refused",
                                       "category": decision.category, "stage": "input"},

@@ -41,6 +41,8 @@ class _PatientDashboardState extends State<PatientDashboard> {
   bool _isLoadingSummary = false;
   String? _summaryError;
   String _chartMetric = 'sleep';
+  List<dynamic> _journals = [];
+  bool _isLoadingJournals = false;
 
   @override
   void initState() {
@@ -48,6 +50,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
     widget.careState.addListener(_onCareStateChanged);
     _fetchSummary();
     _fetchLiveVitals();
+    _fetchJournals();
     _vitalsTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (mounted) _fetchLiveVitals();
     });
@@ -115,6 +118,21 @@ class _PatientDashboardState extends State<PatientDashboard> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _fetchJournals() async {
+    setState(() => _isLoadingJournals = true);
+    try {
+      final res = await _apiClient.get('/patient/journals');
+      if (!mounted) return;
+      setState(() {
+        _journals = (res['journals'] as List?) ?? [];
+      });
+    } catch (_) {
+      // silently ignore or retain current
+    } finally {
+      if (mounted) setState(() => _isLoadingJournals = false);
+    }
+  }
+
   Future<void> _submitJournal() async {
     final text = _journalController.text.trim();
     if (text.isEmpty || _isSubmitting) {
@@ -127,6 +145,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
       _journalController.clear();
       _toast('Journal entry saved.');
       _fetchSummary();
+      _fetchJournals();
     } catch (e) {
       _toast('Could not save journal entry: $e');
     } finally {
@@ -470,6 +489,150 @@ class _PatientDashboardState extends State<PatientDashboard> {
           ),
         ),
         const SizedBox(height: 12),
+        SectionCard(
+          title: 'My Journal History & Doctor Remarks',
+          child: _isLoadingJournals && _journals.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              : _journals.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'No previous journal entries yet. When you write a note, it will appear here along with your clinician\'s remarks.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  : Column(
+                      children: _journals.map<Widget>((j) {
+                        final entryDate = j['created_at'] != null
+                            ? (j['created_at'] as String).replaceFirst('T', ' ').split('.').first
+                            : '';
+                        final doctorReply = j['doctor_reply'] as String?;
+                        final doctorReplyAt = j['doctor_reply_at'] != null
+                            ? (j['doctor_reply_at'] as String).replaceFirst('T', ' ').split('.').first
+                            : '';
+                        final doctorName = j['doctor_name'] as String? ?? 'Your Clinician';
+
+                        return Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).cardColor,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0x22FFFFFF)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.book, size: 16, color: Color(0xFF256D85)),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        entryDate,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (doctorReply != null)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.teal.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: Colors.teal.withOpacity(0.5)),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.verified, size: 12, color: Colors.tealAccent),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            'Doctor Replied',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.tealAccent,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  else
+                                    const Text(
+                                      'Pending clinician review',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                j['entry'] ?? '',
+                                style: const TextStyle(fontSize: 14, height: 1.3),
+                              ),
+                              if (doctorReply != null) ...[
+                                const SizedBox(height: 10),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.teal.withOpacity(0.08),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.medical_services, size: 14, color: Colors.teal),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            '$doctorName · $doctorReplyAt',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.teal,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        doctorReply,
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          height: 1.3,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+        ),
+        const SizedBox(height: 12),
         const SectionCard(
           title: 'Gentle Prompts',
           child: Wrap(
@@ -809,12 +972,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
                 value: _moodAvgValue,
                 unit: '/5',
                 status: _moodRiskLevel,
-              ),
-              MetricTile(
-                label: 'Adherence',
-                value: _adherenceValue,
-                unit: '%',
-                status: _adherenceRiskLevel,
               ),
               MetricTile(
                 label: 'Sleep Avg',
