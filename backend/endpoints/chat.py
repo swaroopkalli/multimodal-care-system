@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -30,23 +31,46 @@ Provide concise, structured summaries of patient history, reported symptoms, med
 {POLICY}
 Keep responses concise, structured and analytical."""
 
-PATIENT_SYSTEM_PROMPT = f"""You are an empathetic wellness coach AI supporting a patient.
-Reply DIRECTLY, WARMLY, and BRIEFLY in AT MOST 3 SHORT SENTENCES. Use plain, conversational language — never use bullet points, headers, or clinical jargon.
-Acknowledge the patient's feelings with genuine validation, kindness, and calm support.
-Offer supportive conversation, stress-reduction ideas, and help the patient understand their own sleep, activity and heart-rate trends.
+PATIENT_SYSTEM_PROMPT = f"""You are an empathetic healthcare wellness companion supporting a patient.
+Reply DIRECTLY, WARMLY, and BRIEFLY in AT MOST 3 SHORT SENTENCES. Use plain, conversational language — never use bullet points, headers, or clinical/engineering jargon.
+STRICT JARGON RESTRICTION: NEVER use technical, mathematical, or algorithmic terms like "smoothed", "EWMA", "heuristic", "aggregates", or "sample count".
+PRIORITIZE HUMAN EMPATHY IN DISTRESS: When a patient expresses emotional distress, overwhelm, loneliness, or anxiety, focus primarily on genuine validation, kindness, and calming presence in the moment. DO NOT awkwardly force wearable metrics or data into an emotional response unless the patient explicitly asks about their vitals or physical numbers.
+When discussing data, refer to metrics naturally (e.g. "your typical resting heart rate" or "your recent sleep pattern").
 End with a gentle, supportive presence (e.g., "I'm right here with you." or "We can take this one step at a time.").
 {POLICY}
 Always encourage seeking professional help when appropriate."""
 
 MAX_PATIENT_TOKENS = int(os.getenv("CHAT_MAX_PATIENT_TOKENS", "120"))
 
+_JARGON_REPLACEMENTS = [
+    (re.compile(r"\bsmoothed\s+(?:resting\s+)?heart\s*rate(?:\s+trend)?\b", re.I), "resting heart rate"),
+    (re.compile(r"\bsmoothed\s+(?:sleep\s+)?trend\b", re.I), "recent sleep pattern"),
+    (re.compile(r"\bsmoothed\s+(?:daily\s+)?trends?\b", re.I), "typical patterns"),
+    (re.compile(r"\bsmoothed\b", re.I), "typical"),
+    (re.compile(r"\bEWMA\b", re.I), "weekly average"),
+    (re.compile(r"\b(?:monitoring\s+)?heuristic\s+(?:score\s+)?(?:\d+(?:\.\d+)?(?:/10)?)?\b", re.I), "observed indicators"),
+]
 
-def trim_to_sentences(text: str, max_tokens: int) -> str:
-    """Trim response at sentence boundary to respect distress-adapted cognitive limits."""
-    from services.guardrails.policy import sentences
-    if not text or len(text.split()) * 1.3 <= max_tokens:
+
+def sanitize_patient_jargon(text: str) -> str:
+    """Clean up any leaked data-pipeline or statistical jargon into natural healthcare phrasing."""
+    if not text:
         return text
+    cleaned = text
+    for pattern, replacement in _JARGON_REPLACEMENTS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
+def trim_to_sentences(text: str, max_tokens: int = 120, max_sentences: int = 3) -> str:
+    """Trim response at sentence boundary to respect distress-adapted cognitive limits and sanitize jargon."""
+    from services.guardrails.policy import sentences
+    if not text:
+        return text
+    text = sanitize_patient_jargon(text)
     sents = sentences(text)
+    if len(sents) > max_sentences:
+        sents = sents[:max_sentences]
     out, budget_rem = [], float(max_tokens)
     for s in sents:
         cost = len(s.split()) * 1.3

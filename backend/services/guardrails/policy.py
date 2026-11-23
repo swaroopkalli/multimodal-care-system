@@ -73,8 +73,10 @@ def normalize(text: str) -> str:
 
 
 def sentences(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.!?])\s+|\n+|;\s+", text)
-    return [p.strip() for p in parts if p and p.strip()]
+    protected = re.sub(r"\b(Dr|Mr|Mrs|Ms|Prof)\.\s+", r"\1_DOT_ ", text)
+    protected = re.sub(r"\b(e\.g|i\.e)\.\s+", r"\1_DOT_ ", protected)
+    parts = re.split(r"(?<=[.!?])\s+|\n+|;\s+", protected)
+    return [p.replace("_DOT_ ", ". ").strip() for p in parts if p and p.strip()]
 
 
 MAX_RETRIES_DEFAULT = 1

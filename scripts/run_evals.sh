@@ -52,4 +52,4 @@ echo "Running MindBridge LLM Evaluation Suite..."
 echo "Project root: ${PROJECT_ROOT}"
 echo "========================================================================"
 
-python3 -m services.evals.run_evals "${ARGS[@]}"
+python3 -m services.evals.run_evals ${ARGS[@]+"${ARGS[@]}"}

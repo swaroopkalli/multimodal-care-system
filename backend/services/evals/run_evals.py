@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -76,18 +77,24 @@ def simulate_or_generate_response(case: EvalCase, use_live_llm: bool = True) -> 
         if case.role == "staff":
             res = llm.generate_response_ex(prompt, context, query, temperature=0.2)
         else:
-            res = llm.generate_chat_response_ex(prompt, [], query, context=context, temperature=0.3)
+            res = llm.generate_chat_response_ex(prompt, case.history, query, context=context, temperature=0.3)
         raw_drafts.append(res.content)
         return res.content
 
     source_text = f"{context}\n\n{query}" if context else query
-    reply = run_guarded(case.role, generate, source_text=source_text, extra_drugs=case.extra_drugs)
-    delivered = reply.text
-    if case.role == "patient" and reply.action == "allowed":
-        delivered = trim_to_sentences(delivered, case.max_tokens)
+    try:
+        reply = run_guarded(case.role, generate, source_text=source_text, extra_drugs=case.extra_drugs)
+        delivered = reply.text
+        if case.role == "patient" and reply.action == "allowed":
+            delivered = trim_to_sentences(delivered, case.max_tokens, case.max_sentences)
+        action = reply.action
+    except Exception as err:
+        log.warning("Generation failed for case %s: %s", case.id, err)
+        delivered = f"Generation error: {err}"
+        action = "error"
 
     raw_generated = raw_drafts[0] if raw_drafts else delivered
-    return delivered, raw_generated, reply.action
+    return delivered, raw_generated, action
 
 
 def run_evaluation(fixtures_path: str | Path, output_path: str | Path | None = None,
@@ -124,7 +131,7 @@ def run_evaluation(fixtures_path: str | Path, output_path: str | Path | None = N
             m3_scores.append(m3_res["score"])
 
         # Evaluate M4: Distress-Adapted Conciseness
-        is_patient_case = case.role == "patient"
+        is_patient_case = case.role == "patient" and action != "crisis"
         m4_res = evaluate_conciseness(delivered, max_sentences=case.max_sentences, max_tokens=case.max_tokens, role=case.role)
         if is_patient_case:
             m4_scores.append(m4_res["score"])
@@ -163,6 +170,12 @@ def run_evaluation(fixtures_path: str | Path, output_path: str | Path | None = N
             print(f"     Delivered: {delivered[:80]}...")
             if not m1_res["passed"]:
                 print(f"     M1 Violations: {m1_res['categories']}")
+
+        # Pacing: sleep between token-heavy live LLM prompts to prevent rate limiting
+        if use_live_llm and action == "allowed" and idx < len(cases):
+            sleep_sec = float(os.getenv("EVAL_SLEEP_SECONDS", "1.5"))
+            if sleep_sec > 0:
+                time.sleep(sleep_sec)
 
     # Calculate Aggregate Metrics
     m1_pct = round((sum(m1_scores) / len(m1_scores) * 100) if m1_scores else 100.0, 1)

@@ -101,13 +101,13 @@ def _build_static_sections(cur, patient_id: int, staff: bool) -> list:
                          f"screen time: {_fmt(d['screentime_minutes'])} min; "
                          f"sample count: {d['sample_count']}.")
         last = days[-1]
-        lines.append(f"Latest smoothed daily trends (EWMA): sleep {_hm(last['sleep_ewma'])}; "
-                     f"heart rate {_fmt(last['hr_mean_ewma'], 0, ' bpm')}; "
-                     f"activity {_fmt(last['steps_ewma'])} steps; "
-                     f"screen time {_fmt(last['screentime_ewma'])} min.")
+        lines.append(f"Recent baseline weekly patterns: sleep {_hm(last['sleep_ewma'])}; "
+                     f"resting heart rate {_fmt(last['hr_mean_ewma'], 0, ' bpm')}; "
+                     f"daily activity {_fmt(last['steps_ewma'])} steps; "
+                     f"daily screen time {_fmt(last['screentime_ewma'])} min.")
         score = _stress_heuristic(last["sleep_ewma"], last["hr_mean_ewma"])
         if score is not None:
-            lines.append(f"- Monitoring heuristic (not a clinical score): {score:.1f}/10 based on shorter sleep and higher heart rate")
+            lines.append(f"- Pattern note: shorter sleep duration and elevated resting heart rate observed across recent days.")
         if any(d["is_simulated"] for d in days):
             lines.append("NOTE: values marked [SIMULATED] are synthetic test data, not real measurements.")
         sections.append({"name": "wearables", "priority": 1, "text": "\n".join(lines)})

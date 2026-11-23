@@ -29,7 +29,7 @@ _REQUEST_PATTERNS = [
     re.compile(rf"\b(?:is it|would it be)\s+(?:ok|okay|safe|fine|alright|acceptable|wise|a good idea|better)\s+(?:for me\s+)?to\s+(?:{ACTION})\b"),
     re.compile(r"\b(?:what|which)\s+(?:dose|dosage|strength|amount)\b"),
     re.compile(r"\bhow\s+(?:much|many)\b.{0,30}\b(?:mg|milligrams?|ml|pills?|tablets?|capsules?|doses?|drops?|take)\b"),
-    re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?(?:right|correct|best|safe|normal|usual|recommended|maximum|max|minimum|proper|ideal)\s+(?:dose|dosage|amount)\b"),
+    re.compile(r"\bwhat(?:'s| is)?\s+(?:the\s+)?(?:(?:right|correct|best|safe|normal|usual|recommended|maximum|max|minimum|proper|ideal)\s+){1,2}(?:dose|dosage|amount)\b"),
     re.compile(r"\b(?:prescribe|prescribing)\b|\bwrite\s+(?:me\s+)?a\s+prescription\b"),
     re.compile(rf"\b(?:recommend|suggest|advise|give|offer)\s+(?:me\s+)?(?:a|an|some|any|the)?\s*(?:\w+\s+){{0,2}}(?:{_MED_NOUN})\b"),
     re.compile(rf"\bwhich\s+(?:\w+\s+){{0,2}}(?:{_MED_NOUN})\b.{{0,40}}\b(?:should|best|better|recommend|take|try|work)"),
@@ -79,10 +79,12 @@ _MATH_QUESTION = re.compile(
 )
 
 _CRISIS = re.compile(
-    r"\b(?:kill(?:ing)?\s+myself|suicid\w*|end(?:ing)?\s+(?:my\s+life|it\s+all)|take\s+my\s+(?:own\s+)?life|"
-    r"want(?:ed)?\s+to\s+die|wanna\s+die|better\s+off\s+dead|don'?t\s+want\s+to\s+(?:live|be\s+alive|exist)|"
-    r"no\s+reason\s+to\s+live|hurt(?:ing)?\s+myself|harm(?:ing)?\s+myself|self[- ]?harm\w*|cut(?:ting)?\s+myself|"
-    r"not\s+worth\s+living|overdose\s+on\s+purpose)\b"
+    r"\b(?:kill(?:ed|ing)?\s+myself|suicid\w*|end(?:ing|ed)?\s+(?:my\s+life|it\s+all)|"
+    r"tak(?:e|ing|en)?\s+my\s+(?:own\s+)?life|"
+    r"want(?:ed|ing)?\s+to\s+(?:\w+\s+){0,3}die|wanna\s+die|better\s+off\s+dead|"
+    r"don'?t\s+want\s+to\s+(?:live|be\s+alive|exist)|no\s+reason\s+to\s+live|"
+    r"hurt(?:ing|ed)?\s+myself|harm(?:ing|ed)?\s+myself|self[- ]?harm\w*|cut(?:ting)?\s+myself|"
+    r"not\s+worth\s+living|overdos\w*)\b"
 )
 
 

@@ -160,7 +160,15 @@ def _nvidia_nim_chat_ex(messages: list[dict[str, str]], temperature: float) -> L
             choice = choices[0]
             content = choice.get("message", {}).get("content")
             if not isinstance(content, str) or not content.strip():
-                raise LLMError("NVIDIA NIM returned a malformed or empty chat response")
+                refusal = choice.get("message", {}).get("refusal")
+                if isinstance(refusal, str) and refusal.strip():
+                    content = refusal.strip()
+                elif choice.get("finish_reason") == "content_filter":
+                    content = "I cannot fulfill this request due to content safety policies."
+                elif choice.get("message", {}).get("reasoning_content"):
+                    content = choice["message"]["reasoning_content"].strip()
+                else:
+                    raise LLMError("NVIDIA NIM returned a malformed or empty chat response")
 
             usage = result.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
